@@ -13,7 +13,7 @@
 #define TV_PIN A2     //TV adjustment button pin
 #define TI_PIN A1     //TI adjustment button pin
 #define IE_PIN A0     //IE adjustment button pin
-#define BUZZER 5
+#define BUZZER 5      //Buzzer pin
 #define HALL 6
 
 long ROTARY_COUNT = 0, ROTARY_LAST=0;
