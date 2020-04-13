@@ -14,7 +14,7 @@
 #define TI_PIN A1     //TI adjustment button pin
 #define IE_PIN A0     //IE adjustment button pin
 #define BUZZER 5
-#define HALL 6
+#define HALL 6      //A funny JOKE
 
 long ROTARY_COUNT = 0, ROTARY_LAST=0;
 bool TV_SAVE=false, TI_SAVE=false, IE_SAVE=false;
