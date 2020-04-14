@@ -1,4 +1,15 @@
-//Vatilator system Monitoring
+/* LIBV Project
+ * Website: https://bvmvent.org/
+ *
+ * #VENTILATOR SYSTEM MONITORING#
+ * 
+ * NOTE:
+ *
+ * LIBRARY:
+ * - Encoder: https://github.com/PaulStoffregen/Encoder
+ * - LiquidCrystal_I2C: https://github.com/fdebrabander/Arduino-LiquidCrystal-I2C-library
+ * - button: https://github.com/eTRONICSKH/SimpleButton-Arduino-Library
+ */
 
 #include <EEPROM.h>
 #include <Wire.h>
@@ -6,12 +17,16 @@
 #include <Encoder.h>
 #include <button.h>
 
-//Pin-input: Rotary
+//P-IN: Rotary
 #define ROTARY_DT 2
 #define ROTARY_CLK 3
 #define ROTARY_SW 4
 
-//Pin-input: Button
+//P-IN: Analog sensor
+#define PRES1_PIN A2
+#define PRES2_PIN A3
+
+//P-IN: Button
 #define SAVE_PIN  5   //Save adjustment setting button pin
 #define CANCEL_PIN  6 //Cancel adjustment saving button pin
 #define SILENT_PIN A0 //Silent the alarm Buzzer
@@ -19,11 +34,11 @@
 #define TI_PIN 8      //TI adjustment button pin
 #define IE_PIN 9      //IE adjustment button pin
 
-//Pin-input: Hall Sensor
+//P-IN: Hall Sensor
 #define HALL1 11        //Hall1 sensor pin
 #define HALL2 10        //Hall2 sensor pin
 
-//Pin-output: Alarm
+//P-OUT: Alarm
 #define BUZZER 12   //Buzzer pin
 #define LED 13      //LED alarm flash
 
@@ -31,27 +46,29 @@
 #define SLAVE1 8    //Arduino2 as slave station 8 on I2C
 
 
-//Var: Rotary value
+//VAR: Rotary value
 long ROTARY_COUNT = 0, ROTARY_LAST=0;
 
-//Var: Setting value
+//VAR: Setting value
 int TV, TI, IE;
 
-//Val: EPPROM Address
+//VAL: EPPROM Address
 const int TV_ADD= 10, TI_ADD=11, IE_ADD=12;
 
-//Val: Setting value limit
+//VAR: Setting value limit
 const int TV_MIN=0, TV_MAX=680;
 const int TI_MIN=800, TI_MAX=3000;
 const int IE_MIN=2, IE_MAX=8;
 
-//Var: Adjustment action value
+//VAR: Adjustment action value
 bool ad_Stat=false;        //Adjustment status
 int ad_TV, ad_TI, ad_IE;   //Adjust value while adjusting 
 long ad_t, ad_tout=20000;  //Adjustment timeout timer, set timeout for 20s
 
-//Var: Display value
+//VAR: Display value
 int ds_TV, ds_TI, ds_IE;
+
+//VAR: Alarm
 
 
 Encoder rotary(ROTARY_DT, ROTARY_CLK);
@@ -136,14 +153,14 @@ void loop() {
 
   //Save and Send data
   if(ad_Stat){
-    if(SAVE_BUT.push()){
+    if(SAVE_BUT.push()){  //Save and use the NEW setting data
       TV = ad_TV;
       TI = ad_TI;
       IE = ad_IE;
       EEPROM_update();
       wireData(SLAVE1);
       ad_Stat = false;
-    }else if(CANCEL_BUT.push() || (millis()- ad_t >= ad_tout)){
+    }else if(CANCEL_BUT.push() || (millis()- ad_t >= ad_tout)){ //Cancel new setting data and back to in-use data
       ad_TV = TV;
       ad_TI = TI;
       ad_IE = IE;
