@@ -1,46 +1,66 @@
 //Vatilator system Monitoring
+
 #include <EEPROM.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <Encoder.h>
 #include <button.h>
 
-#define ROTARY_CLK 3
+//Pin-input: Rotary
 #define ROTARY_DT 2
+#define ROTARY_CLK 3
+#define ROTARY_SW 4
 
-#define SAVE_PIN  8   //Save adjustment setting button pin
-#define CANCEL_PIN  9 //Cancel adjustment saving button pin
-#define TV_PIN A2     //TV adjustment button pin
-#define TI_PIN A1     //TI adjustment button pin
-#define IE_PIN A0     //IE adjustment button pin
-#define BUZZER 5      //Buzzer pin
-#define HALL 6
+//Pin-input: Button
+#define SAVE_PIN  5   //Save adjustment setting button pin
+#define CANCEL_PIN  6 //Cancel adjustment saving button pin
+#define SILENT_PIN A0 //Silent the alarm Buzzer
+#define TV_PIN 7      //TV adjustment button pin
+#define TI_PIN 8      //TI adjustment button pin
+#define IE_PIN 9      //IE adjustment button pin
 
+//Pin-input: Hall Sensor
+#define HALL1 11        //Hall1 sensor pin
+#define HALL2 10        //Hall2 sensor pin
+
+//Pin-output: Alarm
+#define BUZZER 12   //Buzzer pin
+#define LED 13      //LED alarm flash
+
+//COM: I2C
+#define SLAVE1 8    //Arduino2 as slave station 8 on I2C
+
+
+//Var: Rotary value
 long ROTARY_COUNT = 0, ROTARY_LAST=0;
-bool TV_SAVE=false, TI_SAVE=false, IE_SAVE=false;
 
-int TV=100, TI=1000, IE=2;
-const int TV_MIN=0, TV_MAX=680, TI_MIN=800, TI_MAX=3000, IE_MIN=2, IE_MAX=8;
+//Var: Setting value
+int TV, TI, IE;
 
-//Adjustment Variable (Setting Change)
+//Val: EPPROM Address
+const int TV_ADD= 10, TI_ADD=11, IE_ADD=12;
+
+//Val: Setting value limit
+const int TV_MIN=0, TV_MAX=680;
+const int TI_MIN=800, TI_MAX=3000;
+const int IE_MIN=2, IE_MAX=8;
+
+//Var: Adjustment action value
 bool ad_Stat=false;        //Adjustment status
-int ad_TV, ad_TI, ad_IE;   //
-long ad_t, ad_tout=20000;        //Adjustment timeout timer, set timeout for 20s
+int ad_TV, ad_TI, ad_IE;   //Adjust value while adjusting 
+long ad_t, ad_tout=20000;  //Adjustment timeout timer, set timeout for 20s
 
-//Display Variable 
+//Var: Display value
 int ds_TV, ds_TI, ds_IE;
 
-long t=0;
-
-//Alarm Variable
-long al_t;
-int al_count=0;
-bool al_stat=false, al_new=true;
 
 Encoder rotary(ROTARY_DT, ROTARY_CLK);
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+LiquidCrystal_I2C lcd(0x27, 16, 2);   //LCD 16x2, I2C address 0x27
+
+button ROTARY_SW_BUT(ROTARY_SW);
 button SAVE_BUT(SAVE_PIN);
 button CANCEL_BUT(CANCEL_PIN);
+button SILENT_BUT(SILENT_PIN);
 button TV_BUT(TV_PIN);
 button TI_BUT(TI_PIN);
 button IE_BUT(IE_PIN);
@@ -50,11 +70,15 @@ void setup() {
   lcd.begin();
   lcd.backlight();
 
+  pinMode(LED, OUTPUT);
   pinMode(BUZZER, OUTPUT);
-  pinMode(HALL, INPUT);
+  pinMode(HALL1, INPUT);
+  pinMode(HALL2, INPUT);
 
+  ROTARY_SW_BUT.begin(true);
   SAVE_BUT.begin(true);
   CANCEL_BUT.begin(true);
+  SILENT_BUT.begin(true);
   TV_BUT.begin(true);
   TI_BUT.begin(true);
   IE_BUT.begin(true);
@@ -64,15 +88,13 @@ void setup() {
   lcd.setCursor(1,0);
   lcd.print("  STARTING...   ");
   
-  TV = EEPROM.read(10)*10;
-  TI = EEPROM.read(11)*100;
-  IE = EEPROM.read(12);
+  EEPROM_read();
   ad_TV = TV;
   ad_TI = TI;
   ad_IE = IE;
   delay(2000);
+  wireData(SLAVE1);
 
-  wireData();
   BEEP();
   lcd.setCursor(1,0);
   lcd.print("     READY     ");
@@ -118,10 +140,8 @@ void loop() {
       TV = ad_TV;
       TI = ad_TI;
       IE = ad_IE;
-      EEPROM.update(10, TV/10);
-      EEPROM.update(11, TI/100);
-      EEPROM.update(12, IE);
-      wireData();
+      EEPROM_update();
+      wireData(SLAVE1);
       ad_Stat = false;
     }else if(CANCEL_BUT.push() || (millis()- ad_t >= ad_tout)){
       ad_TV = TV;
@@ -139,7 +159,7 @@ void loop() {
     ds_IE = IE;
   }
   
-  //Line the data for Display
+  //Line the data for Display on LCD
   String str_TV, str_TI, str_IE, str_BPM;
 
   str_TV = (String)ds_TV;
@@ -161,32 +181,28 @@ void loop() {
   lcd.print(str_IE + str_BPM + "  ");
 }
 
-
-void alarmTrigger(bool _al_stat, int _al_num){
-	int _num_count[3];
-	long _time_on[3];
-	long _time_of[3];
-  	if(_al_stat && (al_count<=_num_count[_al_num]){
-  		if(!buzzer_stat && (millis()-al_t >= _time_on[_al_num])){
-  			al_t = millis();
-  			al_stat = true;
-  			al_count++;
-  		}else if(buzzer_stat && (millis()-al_t >= _time_of[_al_num])){
-  			al_t = millis();
-  			al_stat = false;
-  		}
-  	}else al_count=0;
-}
-
 void BEEP(){
   digitalWrite(BUZZER, 1);
   delay(200);
   digitalWrite(BUZZER, 0);
 }
 
+void EEPROM_update(){
+  EEPROM.update(TV_ADD, TV/10);
+    EEPROM.update(TI_ADD, TI/100);
+    EEPROM.update(IE_ADD, IE);
+}
 
-void wireData(){
-  Wire.beginTransmission(8);
+void EEPROM_read(){
+  TV = EEPROM.read(TV_ADD)*10;
+  TI = EEPROM.read(TI_ADD)*100;
+  IE = EEPROM.read(IE_ADD);
+}
+
+//Send the data to slave
+//slave: slave's ID to send the data to.
+void wireData(uint8_t _slave){
+  Wire.beginTransmission(_slave);
   Wire.write(TV/10);
   Wire.write(TI/100);    
   Wire.write(IE); 
