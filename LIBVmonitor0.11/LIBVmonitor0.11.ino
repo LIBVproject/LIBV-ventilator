@@ -121,7 +121,7 @@ void loop() {
     ad_t = millis();
     ad_Stat = true;
     if(ROTARY_COUNT != ROTARY_LAST){
-      ad_TV += (ROTARY_COUNT - ROTARY_LAST)*10;
+      ad_TV += (ROTARY_COUNT - ROTARY_LAST)*20;
       ROTARY_LAST = ROTARY_COUNT;
       ad_TV = constrain(ad_TV, TV_MIN, TV_MAX);
     }

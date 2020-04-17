@@ -232,12 +232,6 @@ void receiveEvent(int howMany) {
 
   EEPROM_update();
   BPM_Timing();
-  Serial.print("TV:");
-  Serial.print(TV);
-  Serial.print(" | TI:");
-  Serial.print(TI);
-  Serial.print(" | IE:");
-  Serial.println(IE*0.5);
 }
 
 void EEPROM_update(){
