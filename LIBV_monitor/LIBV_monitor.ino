@@ -13,8 +13,8 @@
 #define TV_PIN A2     //TV adjustment button pin
 #define TI_PIN A1     //TI adjustment button pin
 #define IE_PIN A0     //IE adjustment button pin
-#define BUZZER 5      //Buzzer pin
-#define HALL 6
+#define BUZZER 5
+#define HALL 6      //A funny JOKE
 
 long ROTARY_COUNT = 0, ROTARY_LAST=0;
 bool TV_SAVE=false, TI_SAVE=false, IE_SAVE=false;
@@ -31,11 +31,6 @@ long ad_t, ad_tout=20000;        //Adjustment timeout timer, set timeout for 20s
 int ds_TV, ds_TI, ds_IE;
 
 long t=0;
-
-//Alarm Variable
-long al_t;
-int al_count=0;
-bool al_stat=false, al_new=true;
 
 Encoder rotary(ROTARY_DT, ROTARY_CLK);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
@@ -161,29 +156,11 @@ void loop() {
   lcd.print(str_IE + str_BPM + "  ");
 }
 
-
-void alarmTrigger(bool _al_stat, int _al_num){
-	int _num_count[3];
-	long _time_on[3];
-	long _time_of[3];
-  	if(_al_stat && (al_count<=_num_count[_al_num]){
-  		if(!buzzer_stat && (millis()-al_t >= _time_on[_al_num])){
-  			al_t = millis();
-  			al_stat = true;
-  			al_count++;
-  		}else if(buzzer_stat && (millis()-al_t >= _time_of[_al_num])){
-  			al_t = millis();
-  			al_stat = false;
-  		}
-  	}else al_count=0;
-}
-
 void BEEP(){
   digitalWrite(BUZZER, 1);
   delay(200);
   digitalWrite(BUZZER, 0);
 }
-
 
 void wireData(){
   Wire.beginTransmission(8);
