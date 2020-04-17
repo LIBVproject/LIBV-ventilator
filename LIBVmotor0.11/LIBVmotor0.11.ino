@@ -1,11 +1,20 @@
-/*
- * Vatilator Motor Controller
+/* LIBV Project
+ * Website: https://bvmvent.org/
  * 
+ * #VENTILATOR MOTOR CONTROL#
+ * 
+ * NOTE:
  * >DO NOT put any thing make the loop slow or interrupted,
  *  the PiD functin need real time to calculate
  *  - Don't use delay() in 'Loop'
  *  - Try not to print alot of data with serial in 'Loop'
  *  - Don't use 'while()'
+ *
+ * LIBRARY:
+ * - Encoder: https://github.com/PaulStoffregen/Encoder
+ * - simplePID: https://github.com/eTRONICSKH/SimplePID-Arduino-Library
+ * - BTS7960 Driver: https://github.com/eTRONICSKH/BTS7960-Driver-Arduino-Library
+ * - button: https://github.com/eTRONICSKH/SimpleButton-Arduino-Library
  */
  
 #include <EEPROM.h>
@@ -13,83 +22,156 @@
 #include <Encoder.h>
 #include <simplePID.h>
 #include <BTS7960.h>
+#include <button.h>
 
-#define STATION 8 //I2C slave station Address
-#define HALL 4
+#define STATION_I2C_ADD 8 //I2C slave station Address
 
-//Motor Drive Variable
+//VAL: EPPROM Address
+const int TV_ADD= 10, TI_ADD=11, IE_ADD=12;
+
+//P-IN: Hall switch
+#define HALL1_PIN 11
+#define HALL2_PIN 10
+
+//P-IN: Button
+#define BREATH_PIN 12
+
+//P-IN: Encoder
 #define chA 2   //Motor's encoder channel A
 #define chB 3   //Motor's encoder channel B
-#define ENA 6    //L298N control pin: ENA
-#define IN1 7    //L298N control pin: IN1
-#define IN2 9    //L298N control pin: IN2
 
-//Motor Spec Variable
-#define mGear 78.0  //Motor's gear ratio
+//P-IN: Analog sensor
+#define PRES1_PIN A2
+#define PRES2_PIN A3
+
+//P-OUT: Motor driver, BTS7960
+#define LPWM 5
+#define RPWM 6
+
+//VAL: Motor's spec
+#define mGear 51.0  //Motor's gear ratio
 #define mPpr 11.0   //Number of tick per one revolution capture by the encoder
 #define mPulse 4.0  //Always 4, the encoder library return 4 in 1 tick from the encoder
 
-//PID Control Variable
-#define Kp 150.0    //Gain Kp of PID
-#define Ki 120.0    //Gain Ki of PID
+//VAL: PID Parameters
+#define Kp 140.0    //Proportional gain
+#define Ki 120.0    //Integral gain
 #define ZERO 0.0    //Zero value
+
+//VAR: PID Variable 
 long t, xt, dt;                   //timer
 long En, xEn;                     //Store the encoder value
-float goPos=0.0, cPos=0.0, dPos;  //Store the Position
-float goSpeed=0, cSpeed=0;        //Target Speed, current Speed
+float goPos=0.0, aPos=0.0, dPos;  //Store the Position
+float goSpeed=0.0, aSpeed=0.0;    //Target Speed, current Speed
 int cmd;                          //digital command from PID, the PWM value
 
 //Setting Variable
-#define RPB 1.3           //Number of round to rotate to one breath inhale
+#define RPB 0.62           //Number of round to rotate to one breath inhale
 int TV, TI, IE;
 float TV_MIN=0, TV_MAX=680;
 float TV2RPB=0.0;
-bool pushIn=false;                  //define action of push IN or release the bag
-int timeIn, timeOut;                //time to push in and push out in millisecond
+//bool pushIn=false;                  //define action of push IN or release the bag
+int timeIn, timeOut, timeRest;                //time to push in and push out in millisecond
 float speedIn, speedOut, speedMov;  //speed to push in and push out of the motor, in round per second (rps)
 unsigned long timer=0;              //to store the timer of running, millis(), millisecond
 
-// Initialize all Library
-simplePID PiD(Kp, Ki);            //Kp, Ki, use only PI, name it to "PiD"
+//VAR: Ven stat
+int venStat=0;
+const int pushIN=0;
+const int pushOUT=1;
+const int pushRest=2;
+
+//VAR: Breath Button
+bool breathing = false;
+bool brth_hold_stat = false;
+const int brth_hold_time = 3000;
+
+simplePID PiD(Kp, Ki);      //Kp, Ki, use only PI, name it to "PiD"
 ramp Ramp(3.0, 2.0, 0.005); //Acceleration, Max Speed, Tolerance, name it to "Ramp"
 Encoder Enc(chA, chB);      //Encoder pins, name it to "Enc"
-L298N motor(IN1, IN2, ENA);
+BTS7960 motor(LPWM, RPWM);
+
+button BREATH_BUT(BREATH_PIN);
+button HALL1(HALL1_PIN);
+button HALL2(HALL2_PIN);
 
 void setup() {
   Serial.begin(9600);
-  pinMode(HALL, INPUT);
+
+  //Initialize the digital input
+  BREATH_BUT.begin(true);
+  HALL1.begin(false);
+  HALL2.begin(false);
 
   //I2C Setup
-  Wire.begin(STATION);                // join i2c bus with address #8
+  Wire.begin(STATION_I2C_ADD);                // join i2c bus with address #8
   Wire.onReceive(receiveEvent);       // I2C receive data event
 
+  
+  EEPROM_read(); //Get Setting from EEPROM
+  BPM_Timing();  //Calc breath timing
 
-  //Get Setting from EEPROM
-  TV = EEPROM.read(10)*10;    // read TV from address 10, already divided by 10 when put to store, multiply 10 back to value
-  TI = EEPROM.read(11)*100;   // read TI from address 11, already divided by 100 when put to store, multiply 100 back to value
-  IE = EEPROM.read(12);       //read IE from address 12
-  BPM_Timing();
+  
+  motor.init();  //Motor Setup
 
-  //Motor Setup
-  motor.init();
+  //Initialize the Arms
   while(true){
     motor.setPWM(-200);
-    if(digitalRead(HALL)) break;;
+    if(HALL2.press()) break;;
   }
-  cPos=0.0;
   motor.setPWM(0);
-  
-  //Wait a while
-  delay(2000);
-  xEn = Enc.read(); //TODO move arm to init position
+  delay(500);
+
+  //Reset Encoder & Timer
+  Enc.write(0);
+  xEn = Enc.read();
   timer = millis();
   xt=millis();
-  
 }
 
 
 void loop() {
-  //readSerial();
+  //readSerial();  //Testing cmd from Serial
+
+  if(!breathing){
+    goPos = ZERO; //go to HOME position
+    if(BREATH_BUT.push()) breathing=true; //Run breathing
+  }else{
+    if(BREATH_BUT.holdTime() >= brth_hold_time) brth_hold_stat=true;
+    if(brth_hold_stat && BREATH_BUT.push()){
+      brth_hold_stat=false;
+      breathing=false;
+    }
+
+    switch(venStat){
+      case pushIN:
+        goPos = TV2RPB;
+        speedMov = speedIn;
+        if(millis()-timer>=timeIn || abs(goPos-aPos)<=0.04){
+          timer = millis();
+          venStat = pushOUT;
+        }
+        break;
+      case pushOUT:
+        goPos = ZERO;
+        speedMov = speedOut;
+        if(millis()-timer>=timeOut){
+          timer = millis();
+          venStat = pushRest;
+        }
+        break;
+      case pushRest:
+        if(millis()-timer>=timeRest){
+          timer = millis();
+          venStat = pushIN;
+        }
+        break;
+    }
+
+  }
+
+  
+
   MotorControl();
 }
 
@@ -102,35 +184,16 @@ void MotorControl(){
     xt=t;                               //Store time to last timer
     En = Enc.read();                    //Get encoder value
     dPos =(En-xEn)/(mGear*mPpr*mPulse); //Calculate round for 10ms
-    cPos += dPos;                       //Calculate current Position
-    cSpeed = 1000.0*dPos/dt;            //Calculate speed in Round per second (RPS)
-    xEn=En;                             //Store current encoder to last value
-  }
-
-  
-  /*-- Correction Calculate --*/
-  if(pushIn){                                             //Motor Push in to TV2RPB position
-    goPos = TV2RPB;
-    speedMov = speedIn;
-    if(millis()-timer>=timeIn || abs(goPos-cPos)<=0.04){
-      timer = millis();
-      pushIn = false;
-    }
-  }else{                                                  //Motor push out to 0.0 position
-    goPos = ZERO;
-    speedMov = -speedIn;
-    if(millis()-timer>=timeOut){
-      timer = millis();
-      pushIn = true;
-      //if(digitalRead(HALL))cPos = 0.0;
-    }
+    aPos += dPos;                       //Actual Position
+    aSpeed = 1000.0*dPos/dt;            //Actual speed in Round per second (RPS)
+    xEn=En;                             //Passing last encoder value
   }
   
-  if(abs(goPos-cPos)<1.1 && abs(goPos-cPos)>0.1) goSpeed = speedMov;
-  else goSpeed = Ramp.cmd(goPos, cPos, dt); 
-  //goSpeed = Ramp.cmd(goPos, cPos, dt);
-  goSpeed *= 1.3;         //Mantain the 30% speed, because of PiD drop to correct the error or do the better PiD tuning
-  cmd = PiD.cmd(goSpeed, cSpeed, dt);    //PiD generate digital control to motor
+  if(abs(goPos-aPos)<1.1 && abs(goPos-aPos)>0.05) goSpeed = speedMov;
+  else goSpeed = Ramp.cmd(goPos, aPos, dt); 
+  //goSpeed = Ramp.cmd(goPos, aPos, dt);
+  goSpeed *= 1.3;         //Mantain the 30% speed, PiD drop to correct the error (bad tuning) or do the better PiD tuning
+  cmd = PiD.cmd(goSpeed, aSpeed, dt);    //PiD generate digital control to motor
   motor.setPWM(cmd);
 }
 
@@ -142,12 +205,21 @@ void readSerial() {
   }
 }
 
+//Alarm sound and LED, silent button to silence the alarm for period of time
+void Alarm(bool _stat, int type){
+  //TODO: define alarm type
+  //TODO: trigger the alarm with _stat
+  //TODO: silent button
+}
+
 //Calculate the Breath timing from Setting
 void BPM_Timing(){
   timeIn = TI;
-  timeOut = TI*(IE*0.5); 
+  timeOut = (TI*IE*0.5)/2.0;
+  timeRest = timeOut; 
   TV2RPB = (TV/TV_MAX)*RPB;
   speedIn = TV2RPB*1000.0/(float)timeIn;
+  speedOut = -(TV2RPB*1000.0/(float)timeOut);
 }
 
 //I2C Receive Data and update to EEPROM
@@ -158,10 +230,7 @@ void receiveEvent(int howMany) {
   TI = Wire.read()*100;
   IE = Wire.read();
 
-  //Each EEPROM address can store (0-255), make sure the data in range or it will lose the correct value
-  EEPROM.update(10, TV/10);
-  EEPROM.update(11, TI/100);
-  EEPROM.update(12, IE);
+  EEPROM_update();
   BPM_Timing();
   Serial.print("TV:");
   Serial.print(TV);
@@ -170,177 +239,15 @@ void receiveEvent(int howMany) {
   Serial.print(" | IE:");
   Serial.println(IE*0.5);
 }
-=======
-/*
- * Vatilator Motor Controller
- * 
- * >DO NOT put any thing make the loop slow or interrupted,
- *  the PiD functin need real time to calculate
- *  - Don't use delay() in 'Loop'
- *  - Try not to print alot of data with serial in 'Loop'
- *  - Don't use 'while()'
- */
- 
-#include <EEPROM.h>
-#include <Wire.h>
-#include <Encoder.h>
-#include <simplePID.h>
-#include <BTS7960.h>
 
-#define STATION 8 //I2C slave station Address
-#define HALL 4
-
-//Motor Drive Variable
-#define chA 2   //Motor's encoder channel A
-#define chB 3   //Motor's encoder channel B
-#define ENA 6    //L298N control pin: ENA
-#define IN1 7    //L298N control pin: IN1
-#define IN2 9    //L298N control pin: IN2
-
-//Motor Spec Variable
-#define mGear 78.0  //Motor's gear ratio
-#define mPpr 11.0   //Number of tick per one revolution capture by the encoder
-#define mPulse 4.0  //Always 4, the encoder library return 4 in 1 tick from the encoder
-
-//PID Control Variable
-#define Kp 150.0    //Gain Kp of PID
-#define Ki 120.0    //Gain Ki of PID
-#define ZERO 0.0    //Zero value
-long t, xt, dt;                   //timer
-long En, xEn;                     //Store the encoder value
-float goPos=0.0, cPos=0.0, dPos;  //Store the Position
-float goSpeed=0, cSpeed=0;        //Target Speed, current Speed
-int cmd;                          //digital command from PID, the PWM value
-
-//Setting Variable
-#define RPB 1.3           //Number of round to rotate to one breath inhale
-int TV, TI, IE;
-float TV_MIN=0, TV_MAX=680;
-float TV2RPB=0.0;
-bool pushIn=false;                  //define action of push IN or release the bag
-int timeIn, timeOut;                //time to push in and push out in millisecond
-float speedIn, speedOut, speedMov;  //speed to push in and push out of the motor, in round per second (rps)
-unsigned long timer=0;              //to store the timer of running, millis(), millisecond
-
-// Initialize all Library
-simplePID PiD(Kp, Ki);            //Kp, Ki, use only PI, name it to "PiD"
-ramp Ramp(3.0, 2.0, 0.005); //Acceleration, Max Speed, Tolerance, name it to "Ramp"
-Encoder Enc(chA, chB);      //Encoder pins, name it to "Enc"
-L298N motor(IN1, IN2, ENA);
-
-void setup() {
-  Serial.begin(9600);
-  pinMode(HALL, INPUT);
-
-  //I2C Setup
-  Wire.begin(STATION);                // join i2c bus with address #8
-  Wire.onReceive(receiveEvent);       // I2C receive data event
-
-
-  //Get Setting from EEPROM
-  TV = EEPROM.read(10)*10;    // read TV from address 10, already divided by 10 when put to store, multiply 10 back to value
-  TI = EEPROM.read(11)*100;   // read TI from address 11, already divided by 100 when put to store, multiply 100 back to value
-  IE = EEPROM.read(12);       //read IE from address 12
-  BPM_Timing();
-
-  //Motor Setup
-  motor.init();
-  while(true){
-    motor.setPWM(-200);
-    if(digitalRead(HALL)) break;;
-  }
-  cPos=0.0;
-  motor.setPWM(0);
-  
-  //Wait a while
-  delay(2000);
-  xEn = Enc.read(); //TODO move arm to init position
-  timer = millis();
-  xt=millis();
-  
+void EEPROM_update(){
+  EEPROM.update(TV_ADD, TV/10);
+  EEPROM.update(TI_ADD, TI/100);
+  EEPROM.update(IE_ADD, IE);
 }
 
-
-void loop() {
-  //readSerial();
-  MotorControl();
+void EEPROM_read(){
+  TV = EEPROM.read(TV_ADD)*10;
+  TI = EEPROM.read(TI_ADD)*100;
+  IE = EEPROM.read(IE_ADD);
 }
-
-void MotorControl(){
-  t = millis();
-  dt = t-xt;
-  
-  /*-- Check speed and position every 10ms --*/
-  if(dt >= 10){
-    xt=t;                               //Store time to last timer
-    En = Enc.read();                    //Get encoder value
-    dPos =(En-xEn)/(mGear*mPpr*mPulse); //Calculate round for 10ms
-    cPos += dPos;                       //Calculate current Position
-    cSpeed = 1000.0*dPos/dt;            //Calculate speed in Round per second (RPS)
-    xEn=En;                             //Store current encoder to last value
-  }
-
-  
-  /*-- Correction Calculate --*/
-  if(pushIn){                                             //Motor Push in to TV2RPB position
-    goPos = TV2RPB;
-    speedMov = speedIn;
-    if(millis()-timer>=timeIn || abs(goPos-cPos)<=0.04){
-      timer = millis();
-      pushIn = false;
-    }
-  }else{                                                  //Motor push out to 0.0 position
-    goPos = ZERO;
-    speedMov = -speedIn;
-    if(millis()-timer>=timeOut){
-      timer = millis();
-      pushIn = true;
-      //if(digitalRead(HALL))cPos = 0.0;
-    }
-  }
-  
-  if(abs(goPos-cPos)<1.1 && abs(goPos-cPos)>0.1) goSpeed = speedMov;
-  else goSpeed = Ramp.cmd(goPos, cPos, dt); 
-  //goSpeed = Ramp.cmd(goPos, cPos, dt);
-  goSpeed *= 1.3;         //Mantain the 30% speed, because of PiD drop to correct the error or do the better PiD tuning
-  cmd = PiD.cmd(goSpeed, cSpeed, dt);    //PiD generate digital control to motor
-  motor.setPWM(cmd);
-}
-
-void readSerial() {
-  if(Serial.available()) {
-    String inString = Serial.readString();
-    goPos = inString.toFloat();
-    Serial.println("dspeed: "+(String)goPos);
-  }
-}
-
-//Calculate the Breath timing from Setting
-void BPM_Timing(){
-  timeIn = TI;
-  timeOut = TI*(IE*0.5); 
-  TV2RPB = (TV/TV_MAX)*RPB;
-  speedIn = TV2RPB*1000.0/(float)timeIn;
-}
-
-//I2C Receive Data and update to EEPROM
-void receiveEvent(int howMany) {
-
-  //Read each byte from master
-  TV = Wire.read()*10;
-  TI = Wire.read()*100;
-  IE = Wire.read();
-
-  //Each EEPROM address can store (0-255), make sure the data in range or it will lose the correct value
-  EEPROM.update(10, TV/10);
-  EEPROM.update(11, TI/100);
-  EEPROM.update(12, IE);
-  BPM_Timing();
-  Serial.print("TV:");
-  Serial.print(TV);
-  Serial.print(" | TI:");
-  Serial.print(TI);
-  Serial.print(" | IE:");
-  Serial.println(IE*0.5);
-}
->>>>>>> 1fa60283eed0e0b55049a32f2c00dbcc7009d77d
