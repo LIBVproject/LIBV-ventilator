@@ -92,16 +92,17 @@ Encoder Enc(chA, chB);      //Encoder pins, name it to "Enc"
 BTS7960 motor(LPWM, RPWM);
 
 button BREATH_BUT(BREATH_PIN);
-button HALL1(HALL1_PIN);
-button HALL2(HALL2_PIN);
+//button HALL1(HALL1_PIN);
+//button HALL2(HALL2_PIN);
 
 void setup() {
   Serial.begin(9600);
 
   //Initialize the digital input
   BREATH_BUT.begin(true);
-  HALL1.begin(false);
-  HALL2.begin(false);
+  pinMode(HALL1_PIN, INPUT);
+  //HALL1.begin(false);
+  //HALL2.begin(false);
 
   //I2C Setup
   Wire.begin(STATION_I2C_ADD);                // join i2c bus with address #8
@@ -117,7 +118,7 @@ void setup() {
   //Initialize the Arms
   while(true){
     motor.setPWM(-200);
-    if(HALL2.press()) break;;
+    if(digitalRead(HALL1_PIN)) break;;
   }
   motor.setPWM(0);
   delay(500);
@@ -194,6 +195,7 @@ void MotorControl(){
   //goSpeed = Ramp.cmd(goPos, aPos, dt);
   goSpeed *= 1.3;         //Mantain the 30% speed, PiD drop to correct the error (bad tuning) or do the better PiD tuning
   cmd = PiD.cmd(goSpeed, aSpeed, dt);    //PiD generate digital control to motor
+  if(brth_hold_stat) cmd = 0;
   motor.setPWM(cmd);
 }
 
