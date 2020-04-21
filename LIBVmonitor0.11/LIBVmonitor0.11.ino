@@ -1,20 +1,47 @@
-//Vatilator system Monitoring
+/* LIBV Project
+ * Website: https://bvmvent.org/
+ * 
+ * #VENTILATOR SYSTEM MONITORING#
+ *
+ * LIBRARY:
+ * - Encoder: https://github.com/PaulStoffregen/Encoder
+ * - simplePID: https://github.com/eTRONICSKH/SimplePID-Arduino-Library
+ * - BTS7960 Driver: https://github.com/eTRONICSKH/BTS7960-Driver-Arduino-Library
+ * - button: https://github.com/eTRONICSKH/SimpleButton-Arduino-Library
+ */
+
 #include <EEPROM.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <Encoder.h>
 #include <button.h>
 
-#define ROTARY_CLK 3
-#define ROTARY_DT 2
+#define MOTOR_I2C_ADD 8
 
-#define SAVE_PIN  8   //Save adjustment setting button pin
-#define CANCEL_PIN  9 //Cancel adjustment saving button pin
-#define TV_PIN A2     //TV adjustment button pin
-#define TI_PIN A1     //TI adjustment button pin
-#define IE_PIN A0     //IE adjustment button pin
-#define BUZZER 5      //Buzzer pin
-#define HALL 6
+#define TV_ADD 10
+#define TI_ADD 11
+#define IE_ADD 12
+
+//P-IN: Rotary encoder
+#define ROTARY_CLK 2
+#define ROTARY_DT 3
+#define ROTARY_SW 4
+
+//P-IN: Button on control panel
+#define SAVE_PIN  5   //Save adjustment setting button pin
+#define CANCEL_PIN  6 //Cancel adjustment saving button pin
+#define TV_PIN 7     //TV adjustment button pin
+#define TI_PIN 8     //TI adjustment button pin
+#define IE_PIN 9     //IE adjustment button pin
+#define SILENT_PIN A0 //Silence the alarm button pin
+
+//P-IN: Hall switch sensor
+#define HALL1_PIN 11
+#define HALL2_PIN 10
+
+//P-OUT: Alarm
+#define BUZZER 12      //Buzzer pin
+#define LED 13
 
 long ROTARY_COUNT = 0, ROTARY_LAST=0;
 bool TV_SAVE=false, TI_SAVE=false, IE_SAVE=false;
@@ -39,11 +66,16 @@ bool al_stat=false, al_new=true;
 
 Encoder rotary(ROTARY_DT, ROTARY_CLK);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+
 button SAVE_BUT(SAVE_PIN);
 button CANCEL_BUT(CANCEL_PIN);
+
 button TV_BUT(TV_PIN);
 button TI_BUT(TI_PIN);
 button IE_BUT(IE_PIN);
+
+button HALL1(HALL1_PIN);
+button HALL2(HALL2_PIN);
 
 void setup() {
   Serial.begin (9600);
@@ -51,7 +83,10 @@ void setup() {
   lcd.backlight();
 
   pinMode(BUZZER, OUTPUT);
-  pinMode(HALL, INPUT);
+  pinMode(LED, OUTPUT);
+
+  HALL1.begin(false);
+  HALL2.begin(false);
 
   SAVE_BUT.begin(true);
   CANCEL_BUT.begin(true);
@@ -64,15 +99,13 @@ void setup() {
   lcd.setCursor(1,0);
   lcd.print("  STARTING...   ");
   
-  TV = EEPROM.read(10)*10;
-  TI = EEPROM.read(11)*100;
-  IE = EEPROM.read(12);
+  EEPROM_read();
   ad_TV = TV;
   ad_TI = TI;
   ad_IE = IE;
   delay(2000);
 
-  wireData();
+  wireData(MOTOR_I2C_ADD);
   BEEP();
   lcd.setCursor(1,0);
   lcd.print("     READY     ");
@@ -88,7 +121,7 @@ void loop() {
     ad_t = millis();
     ad_Stat = true;
     if(ROTARY_COUNT != ROTARY_LAST){
-      ad_TV += (ROTARY_COUNT - ROTARY_LAST)*10;
+      ad_TV += (ROTARY_COUNT - ROTARY_LAST)*20;
       ROTARY_LAST = ROTARY_COUNT;
       ad_TV = constrain(ad_TV, TV_MIN, TV_MAX);
     }
@@ -114,15 +147,14 @@ void loop() {
 
   //Save and Send data
   if(ad_Stat){
-    if(SAVE_BUT.push()){
+    if(SAVE_BUT.push()){ 
       TV = ad_TV;
       TI = ad_TI;
       IE = ad_IE;
-      EEPROM.update(10, TV/10);
-      EEPROM.update(11, TI/100);
-      EEPROM.update(12, IE);
-      wireData();
+      EEPROM_update();
+      wireData(MOTOR_I2C_ADD);
       ad_Stat = false;
+      BEEP();
     }else if(CANCEL_BUT.push() || (millis()- ad_t >= ad_tout)){
       ad_TV = TV;
       ad_TI = TI;
@@ -162,31 +194,27 @@ void loop() {
 }
 
 
-void alarmTrigger(bool _al_stat, int _al_num){
-	int _num_count[3];
-	long _time_on[3];
-	long _time_of[3];
-  	if(_al_stat && (al_count<=_num_count[_al_num]){
-  		if(!buzzer_stat && (millis()-al_t >= _time_on[_al_num])){
-  			al_t = millis();
-  			al_stat = true;
-  			al_count++;
-  		}else if(buzzer_stat && (millis()-al_t >= _time_of[_al_num])){
-  			al_t = millis();
-  			al_stat = false;
-  		}
-  	}else al_count=0;
-}
-
 void BEEP(){
   digitalWrite(BUZZER, 1);
-  delay(200);
+  delay(100);
   digitalWrite(BUZZER, 0);
 }
 
+void EEPROM_update(){
+	EEPROM.update(TV_ADD, TV/10);
+    EEPROM.update(TI_ADD, TI/100);
+    EEPROM.update(IE_ADD, IE);
+}
 
-void wireData(){
-  Wire.beginTransmission(8);
+void EEPROM_read(){
+	TV = EEPROM.read(TV_ADD)*10;
+  	TI = EEPROM.read(TI_ADD)*100;
+  	IE = EEPROM.read(IE_ADD);
+}
+
+
+void wireData(uint8_t _add){
+  Wire.beginTransmission(_add);
   Wire.write(TV/10);
   Wire.write(TI/100);    
   Wire.write(IE); 
