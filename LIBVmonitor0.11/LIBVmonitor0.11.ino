@@ -441,7 +441,7 @@ void loop() {
   		}
 
   		//Confirm to use the setting, exit setting screen to display
-  		if (setBT.onHold()>=2000){
+  		if (setBT.onHold()>=1000){
   			Beep(2,200);
   			wireData(I2C_ADDR_MOTOR);
   			setBT.resetHold();
@@ -482,12 +482,11 @@ void loop() {
 
   	}
 
-  	//Go to setting: hold SET for 2s
-  	if (setBT.onHold()>=2000){
+  	//Go to setting: press Cancel
+  	if (cancelBT.push()){
   		Beep(2, 200);
   		inSetting = true;		//Jump to Setting
-  		disp_modeSet = true;	//Jump back to Select Mode
-  		setBT.resetHold();		//Reset button hold timer
+  		disp_modeSet = false;	//Jump to change current setting
   	}
   }
  
