@@ -134,7 +134,7 @@ const int pushRest=2;
 //VAR: Breath Button
 bool breathing = false;
 bool brth_hold_stat = false;
-const int brth_hold_time = 3000;
+const int brth_hold_time = 2000;
 
 EEPROM_ADDR EEPROMaddress;
 VCV_MODE VCVsetting;
@@ -151,7 +151,7 @@ button BREATH_BUT(BREATH_PIN, HIGH);
 //button HALL2(HALL2_PIN);
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
 
   //Initialize the digital input
   BREATH_BUT.init();
@@ -163,10 +163,8 @@ void setup() {
   Wire.begin(STATION_I2C_ADD);                // join i2c bus with address #8
   Wire.onReceive(receiveEvent);       // I2C receive data event
 
-  
   EEPROM_read(); //Get Setting from EEPROM
   BPM_Timing();  //Calc breath timing
-
   
   motor.init();  //Motor Setup
 
@@ -191,9 +189,16 @@ void loop() {
 
   if(!breathing){
     goPos = ZERO; //go to HOME position
-    if(BREATH_BUT.push()) breathing=true; //Run breathing
+    if(BREATH_BUT.push()) {
+    	breathing=true; //Run breathing
+    	BREATH_BUT.resetHold();
+	}
   }else{
-    if(BREATH_BUT.onHold() >= brth_hold_time) breathing=false;;
+    if(BREATH_BUT.onHold() >= brth_hold_time) {
+    	breathing=false;
+    	BREATH_BUT.resetHold();
+    }
+
 
     switch(venStat){
       case pushIN:
@@ -246,7 +251,7 @@ void MotorControl(){
   //goSpeed = Ramp.cmd(goPos, aPos, dt);
   goSpeed *= 1.3;         //Mantain the 30% speed, PiD drop to correct the error (bad tuning) or do the better PiD tuning
   cmd = PiD.cmd(goSpeed, aSpeed, dt);    //PiD generate digital control to motor
-  if(brth_hold_stat) cmd = 0;
+  if(abs(cmd)<=10) cmd=0;
   motor.setPWM(cmd);
 }
 
@@ -300,6 +305,14 @@ void receiveEvent(int howMany) {
   BPAPsetting.PEEP = Wire.read();
   BPAPsetting.TP = Wire.read();
   BPAPsetting.FST = Wire.read()/singleByteConst.FST;
+
+  Serial.println("-------------------");
+  Serial.print("Mode: ");Serial.println(modeVCV);
+  Serial.print("IP: ");Serial.println(VCVsetting.IP);
+  Serial.print("TV: ");Serial.println(VCVsetting.TV);
+  Serial.print("RR: ");Serial.println(VCVsetting.RR);
+  Serial.print("IE: ");Serial.println(VCVsetting.IE);
+  Serial.print("PEEP: ");Serial.println(VCVsetting.PEEP);
 
   EEPROM_update();
   BPM_Timing();

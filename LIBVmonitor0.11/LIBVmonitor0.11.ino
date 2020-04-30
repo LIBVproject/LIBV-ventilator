@@ -441,7 +441,7 @@ void loop() {
   		}
 
   		//Confirm to use the setting, exit setting screen to display
-  		if (setBT.onHold()>=1000){
+  		if (setBT.onHold()>=1500){
   			Beep(2,200);
   			wireData(I2C_ADDR_MOTOR);
   			setBT.resetHold();
@@ -690,7 +690,7 @@ void lcdDiplay(uint8_t _screen){
         //           -----------------------
         break;
 
-      case scr_BPAPlarm:
+      case scr_BPAPlarm:	
         //           -----------------------
         dispRow.R1 = " >> BPAP  FIALED << ";
         dispRow.R2 = " >> VCV FAILSAFE << ";
