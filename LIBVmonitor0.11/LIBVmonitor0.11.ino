@@ -427,11 +427,14 @@ void loop() {
 
   		//Save selected element's data
   		if (setBT.push()){
-  			Beep();
-  			setBT.resetHold();
-  			DISPLAY2SETTING();	//Transfer display data to setting data
-  			EEPROM_update();	//Update data to memory
-  			disp_change = false; //Change has been saved, nth changed.
+        if(disp_change){
+          setBT.resetHold();
+          Beep();
+          setBT.resetHold();
+          DISPLAY2SETTING();  //Transfer display data to setting data
+          EEPROM_update();  //Update data to memory
+          disp_change = false; //Change has been saved, nth changed.
+        }
   		}else if(cancelBT.push()){	//Back to Selecting mode
   			Beep();
   			if (disp_change){
@@ -442,9 +445,9 @@ void loop() {
 
   		//Confirm to use the setting, exit setting screen to display
   		if (setBT.onHold()>=1500){
+        setBT.resetHold();
   			Beep(2,200);
   			wireData(I2C_ADDR_MOTOR);
-  			setBT.resetHold();
   			inSetting = false; //Jump to display current setting
   			//TODO: Transfer data to Slave
   		}
@@ -614,8 +617,8 @@ void lcdDiplay(uint8_t _screen){
         //           -----------------------
         dispRow.R1 = "      VCV MODE      ";
         dispRow.R2 = " PEEP "+ (String)VCVdisplay.PEEP +"cm           ";
-        dispRow.R3 = " RR "+(String)VCVdisplay.RR+"      IE 1:1  ";
-        dispRow.R4 = " IP "+(String)VCVdisplay.IP+"cm    TV "+ (String)VCVdisplay.TV + "ml";
+        dispRow.R3 = " RR "+(String)VCVdisplay.RR+"     IE 1:"+str_vcv_ie;
+        dispRow.R4 = " IP "+(String)VCVdisplay.IP+"cm   TV "+ (String)VCVdisplay.TV + "ml ";
         //           -----------------------
         break;
 

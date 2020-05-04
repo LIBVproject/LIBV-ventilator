@@ -99,13 +99,13 @@ bool modeVCV=true;
 #define RPWM 6
 
 //VAL: Motor's spec
-#define mGear 51.0  //Motor's gear ratio
-#define mPpr 11.0   //Number of tick per one revolution capture by the encoder
+#define mGear 139.0  //Motor's gear ratio
+#define mPpr 7.0   //Number of tick per one revolution capture by the encoder
 #define mPulse 4.0  //Always 4, the encoder library return 4 in 1 tick from the encoder
 
 //VAL: PID Parameters
-#define Kp 140.0    //Proportional gain
-#define Ki 120.0    //Integral gain
+#define Kp 800.0    //Proportional gain
+#define Ki 10.0    //Integral gain
 #define ZERO 0.0    //Zero value
 
 //VAR: PID Variable 
@@ -118,7 +118,7 @@ int cmd;                          //digital command from PID, the PWM value
 //Setting Variable
 #define RPB 0.62           //Number of round to rotate to one breath inhale
 int TV, TI, IE;
-float TV_MIN=0, TV_MAX=680;
+float TV_MIN=0, TV_MAX=800;
 float TV2RPB=0.0;
 //bool pushIn=false;                  //define action of push IN or release the bag
 int timeIn, timeOut, timeRest;                //time to push in and push out in millisecond
@@ -142,7 +142,7 @@ BPAP_MODE BPAPsetting;
 SINGLE_BYTE_CONST singleByteConst;
 
 simplePID PiD(Kp, Ki);      //Kp, Ki, use only PI, name it to "PiD"
-ramp Ramp(3.0, 2.0, 0.005); //Acceleration, Max Speed, Tolerance, name it to "Ramp"
+ramp Ramp(1.0, 2.0, 0.005); //Acceleration, Max Speed, Tolerance, name it to "Ramp"
 Encoder Enc(chA, chB);      //Encoder pins, name it to "Enc"
 BTS7960 motor(LPWM, RPWM);
 
@@ -170,8 +170,8 @@ void setup() {
 
   //Initialize the Arms
   while(true){
-    motor.setPWM(-200);
-    if(digitalRead(HALL1_PIN)) break;;
+    motor.setPWM(-100);
+    if(!digitalRead(HALL1_PIN)) break;
   }
   motor.setPWM(0);
   delay(500);
@@ -198,16 +198,17 @@ void loop() {
     	breathing=false;
     	BREATH_BUT.resetHold();
     }
-
-
     switch(venStat){
       case pushIN:
         goPos = TV2RPB;
         speedMov = speedIn;
-        if(millis()-timer>=timeIn || abs(goPos-aPos)<=0.04){
-          timer = millis();
-          venStat = pushOUT;
-        }
+        
+//        if(millis()-timer>=timeIn || abs(goPos-aPos)<=0.04){
+//          timer = millis();
+//          venStat = pushOUT;
+//        }
+        if(abs(goPos-aPos)<=0.01) venStat = pushOUT; //reached desire position, move on
+        
         break;
       case pushOUT:
         goPos = ZERO;
@@ -249,7 +250,7 @@ void MotorControl(){
   if(abs(goPos-aPos)<1.1 && abs(goPos-aPos)>0.05) goSpeed = speedMov;
   else goSpeed = Ramp.cmd(goPos, aPos, dt); 
   //goSpeed = Ramp.cmd(goPos, aPos, dt);
-  goSpeed *= 1.3;         //Mantain the 30% speed, PiD drop to correct the error (bad tuning) or do the better PiD tuning
+  goSpeed *= 1.4;         //Mantain the 40% speed, PiD drop to correct the error (bad tuning) or do the better PiD tuning
   cmd = PiD.cmd(goSpeed, aSpeed, dt);    //PiD generate digital control to motor
   if(abs(cmd)<=10) cmd=0;
   motor.setPWM(cmd);
@@ -286,6 +287,8 @@ void BPM_Timing(){
     TV2RPB = (TV/TV_MAX)*RPB;
     speedIn = TV2RPB*1000.0/(float)timeIn;
     speedOut = -(TV2RPB*1000.0/(float)timeOut);
+    Serial.print("TV%: ");
+    Serial.println(TV/TV_MAX);
   }
 
 }
@@ -313,6 +316,7 @@ void receiveEvent(int howMany) {
   Serial.print("RR: ");Serial.println(VCVsetting.RR);
   Serial.print("IE: ");Serial.println(VCVsetting.IE);
   Serial.print("PEEP: ");Serial.println(VCVsetting.PEEP);
+  Serial.println("-------------------");
 
   EEPROM_update();
   BPM_Timing();
