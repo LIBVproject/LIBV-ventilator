@@ -251,6 +251,9 @@ button cancelBT(buttonPin.CANCEL, HIGH);
 button selectBT(buttonPin.SELECT, HIGH);
 button silentBT(buttonPin.SILENT, HIGH);
 
+button Hall1(HALL1_PIN, HIGH);
+button Hall2(HALL2_PIN, HIGH);
+
 void setup() {
   Serial.begin (115200);
 

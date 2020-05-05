@@ -85,6 +85,7 @@ bool modeVCV=true;
 
 //P-IN: Button
 #define BREATH_PIN 12
+#define LED_PIN 13
 
 //P-IN: Encoder
 #define chA 2   //Motor's encoder channel A
@@ -116,13 +117,13 @@ float goSpeed=0.0, aSpeed=0.0;    //Target Speed, current Speed
 int cmd;                          //digital command from PID, the PWM value
 
 //Setting Variable
-#define RPB 0.62           //Number of round to rotate to one breath inhale
+#define RPB 0.38           //Number of round to rotate to one breath inhale
 int TV, TI, IE;
 float TV_MIN=0, TV_MAX=800;
-float TV2RPB=0.0;
+double TV2RPB=0.0;
 //bool pushIn=false;                  //define action of push IN or release the bag
 int timeIn, timeOut, timeRest;                //time to push in and push out in millisecond
-float speedIn, speedOut, speedMov;  //speed to push in and push out of the motor, in round per second (rps)
+double speedIn, speedOut, speedMov;  //speed to push in and push out of the motor, in round per second (rps)
 unsigned long timer=0;              //to store the timer of running, millis(), millisecond
 
 //VAR: Ven stat
@@ -156,6 +157,8 @@ void setup() {
   //Initialize the digital input
   BREATH_BUT.init();
   pinMode(HALL1_PIN, INPUT);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, 0);
   //HALL1.begin(false);
   //HALL2.begin(false);
 
@@ -169,12 +172,25 @@ void setup() {
   motor.init();  //Motor Setup
 
   //Initialize the Arms
+  timer = millis();
   while(true){
-    motor.setPWM(-100);
-    if(!digitalRead(HALL1_PIN)) break;
+    motor.setPWM(-200);
+    if(!digitalRead(HALL1_PIN) || millis()-timer>=10000) break;
+  }
+  motor.setPWM(0);
+  delay(300);
+
+  motor.setPWM(100);
+  delay(1000);
+
+  timer = millis();
+  while(true){
+    motor.setPWM(-80);
+    if(!digitalRead(HALL1_PIN) || millis()-timer>=10000) break;
   }
   motor.setPWM(0);
   delay(500);
+  digitalWrite(LED_PIN, 1);
 
   //Reset Encoder & Timer
   Enc.write(0);
@@ -185,7 +201,7 @@ void setup() {
 
 
 void loop() {
-  //readSerial();  //Testing cmd from Serial
+  readSerial();  //Testing cmd from Serial
 
   if(!breathing){
     goPos = ZERO; //go to HOME position
@@ -194,7 +210,7 @@ void loop() {
     	BREATH_BUT.resetHold();
 	}
   }else{
-    if(BREATH_BUT.onHold() >= brth_hold_time) {
+    if(BREATH_BUT.push()) {
     	breathing=false;
     	BREATH_BUT.resetHold();
     }
@@ -203,12 +219,17 @@ void loop() {
         goPos = TV2RPB;
         speedMov = speedIn;
         
-//        if(millis()-timer>=timeIn || abs(goPos-aPos)<=0.04){
-//          timer = millis();
-//          venStat = pushOUT;
-//        }
-        if(abs(goPos-aPos)<=0.01) venStat = pushOUT; //reached desire position, move on
-        
+        /*
+        if(millis()-timer>=timeIn || abs(goPos-aPos)<=0.04){
+          timer = millis();
+          venStat = pushOUT;
+        }
+		*/
+
+        if(abs(goPos-aPos)<=0.01) {
+        	timer = millis();
+        	venStat = pushOUT; //reached desire position, move on
+        }
         break;
       case pushOUT:
         goPos = ZERO;
@@ -259,8 +280,8 @@ void MotorControl(){
 void readSerial() {
   if(Serial.available()) {
     String inString = Serial.readString();
-    goPos = inString.toFloat();
-    Serial.println("dspeed: "+(String)goPos);
+    TV2RPB = inString.toFloat();
+    Serial.println("Target: "+(String)TV2RPB);
   }
 }
 
@@ -284,12 +305,68 @@ void BPM_Timing(){
     timeIn = TI;
     timeOut = (TI*IE)/2.0;
     timeRest = timeOut; 
-    TV2RPB = (TV/TV_MAX)*RPB;
+    TV2RPB = min(camPosition(TV), RPB);
     speedIn = TV2RPB*1000.0/(float)timeIn;
     speedOut = -(TV2RPB*1000.0/(float)timeOut);
     Serial.print("TV%: ");
     Serial.println(TV/TV_MAX);
   }
+
+}
+
+float camPosition(int _tv){
+	switch (_tv) {
+	    case 250:
+	      return 0.23;
+	      break;
+
+	    case 300:
+	      return 0.25;
+	    break;
+
+	    case 350:
+	      return 0.27;
+	      break;
+
+	    case 400:
+	      return 0.28;
+	      break;
+
+	    case 450:
+	      return 0.29;
+	      break;
+
+	    case 500:
+	      return 0.285;
+	      break;
+
+	    case 550:
+	      return 0.30;
+	      break;
+
+	    case 600:
+	      return 0.315;
+	      break;
+
+	    case 650:
+	      return 0.33;
+	      break;
+
+	    case 700:
+	      return 0.345;
+	      break;
+
+	    case 750:
+	      return 0.36;
+	      break;
+
+	    case 800:
+	      return 0.375;
+	      break;
+
+	    default:
+	      return 0.23;
+	}
 
 }
 
