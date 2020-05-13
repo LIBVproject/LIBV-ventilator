@@ -29,6 +29,11 @@
 //VAL: EPPROM Address
 const int TV_ADD= 10, TI_ADD=11, IE_ADD=12;
 
+enum I2C_Func{
+  I2C_CMD_MOTOR,
+  I2C_DATA_SETTING
+};
+
 struct EEPROM_ADDR {
   //Running Mode
   const int MODE = 10;
@@ -117,7 +122,7 @@ float goSpeed=0.0, aSpeed=0.0;    //Target Speed, current Speed
 int cmd;                          //digital command from PID, the PWM value
 
 //Setting Variable
-#define RPB 0.38           //Number of round to rotate to one breath inhale
+#define RPB 0.335           //Number of round to rotate to one breath inhale
 int TV, TI, IE;
 float TV_MIN=0, TV_MAX=800;
 double TV2RPB=0.0;
@@ -181,12 +186,12 @@ void setup() {
   delay(300);
 
   motor.setPWM(100);
-  delay(1000);
+  delay(500);
 
   timer = millis();
   while(true){
     motor.setPWM(-80);
-    if(!digitalRead(HALL1_PIN) || millis()-timer>=10000) break;
+    if(!digitalRead(HALL1_PIN) || millis()-timer>=5000) break;
   }
   motor.setPWM(0);
   delay(500);
@@ -201,19 +206,23 @@ void setup() {
 
 
 void loop() {
-  readSerial();  //Testing cmd from Serial
+  //readSerial();  //Testing cmd from Serial
 
   if(!breathing){
+  	speedMov = speedOut;
     goPos = ZERO; //go to HOME position
+    /*
     if(BREATH_BUT.push()) {
     	breathing=true; //Run breathing
     	BREATH_BUT.resetHold();
-	}
+	   }*/
   }else{
-    if(BREATH_BUT.push()) {
+    /*
+    if(BREATH_BUT.onHold()>=2000) {
     	breathing=false;
     	BREATH_BUT.resetHold();
-    }
+    }*/
+
     switch(venStat){
       case pushIN:
         goPos = TV2RPB;
@@ -231,6 +240,7 @@ void loop() {
         	venStat = pushOUT; //reached desire position, move on
         }
         break;
+
       case pushOUT:
         goPos = ZERO;
         speedMov = speedOut;
@@ -239,6 +249,7 @@ void loop() {
           venStat = pushRest;
         }
         break;
+
       case pushRest:
         if(millis()-timer>=timeRest){
           timer = millis();
@@ -248,8 +259,6 @@ void loop() {
     }
 
   }
-
-  
 
   MotorControl();
 }
@@ -316,52 +325,64 @@ void BPM_Timing(){
 
 float camPosition(int _tv){
 	switch (_tv) {
+      case 100:
+        return 0.165;//
+        break;
+        
+      case 150:
+        return 0.18;//
+        break;
+        
+      case 200:
+        return 0.195;//
+        break;
+        
 	    case 250:
-	      return 0.23;
+	      return 0.205;//
 	      break;
 
 	    case 300:
-	      return 0.25;
+	      return 0.223;//
 	    break;
 
 	    case 350:
-	      return 0.27;
+	      return 0.231;//
 	      break;
 
 	    case 400:
-	      return 0.28;
+	      return 0.245;//
 	      break;
 
 	    case 450:
-	      return 0.29;
+	      return 0.253;//
 	      break;
 
 	    case 500:
-	      return 0.285;
+	      return 0.27;//
 	      break;
 
 	    case 550:
-	      return 0.30;
+	      return 0.28;//
 	      break;
 
 	    case 600:
-	      return 0.315;
+	      return 0.29;//
 	      break;
 
 	    case 650:
-	      return 0.33;
+	      return 0.30;//
 	      break;
 
 	    case 700:
-	      return 0.345;
+	      return 0.31;//
 	      break;
 
 	    case 750:
-	      return 0.36;
+	      return 0.32;//
 	      break;
 
 	    case 800:
-	      return 0.375;
+	      return 0.335;//
 	      break;
 
 	    default:
@@ -372,19 +393,27 @@ float camPosition(int _tv){
 
 //I2C Receive Data and update to EEPROM
 void receiveEvent(int howMany) {
+  uint8_t _func = Wire.read();
+  switch (_func) {
+      case I2C_CMD_MOTOR:    //Read as motor command
+        breathing = (bool)Wire.read();
+        break;
 
+      case I2C_DATA_SETTING: // Read as setting data
+        modeVCV = (bool)Wire.read();
+        VCVsetting.IP = Wire.read();
+        VCVsetting.TV = Wire.read()/singleByteConst.TV;
+        VCVsetting.RR = Wire.read();
+        VCVsetting.IE = Wire.read()/singleByteConst.IE;
+        VCVsetting.PEEP = Wire.read();
+        BPAPsetting.IP = Wire.read();
+        BPAPsetting.PEEP = Wire.read();
+        BPAPsetting.TP = Wire.read();
+        BPAPsetting.FST = Wire.read()/singleByteConst.FST;
+        break;
+  }
   //Read each byte from master
-  modeVCV = (bool)Wire.read();
-  VCVsetting.IP = Wire.read();
-  VCVsetting.TV = Wire.read()/singleByteConst.TV;
-  VCVsetting.RR = Wire.read();
-  VCVsetting.IE = Wire.read()/singleByteConst.IE;
-  VCVsetting.PEEP = Wire.read();
-
-  BPAPsetting.IP = Wire.read();
-  BPAPsetting.PEEP = Wire.read();
-  BPAPsetting.TP = Wire.read();
-  BPAPsetting.FST = Wire.read()/singleByteConst.FST;
+  
 
   Serial.println("-------------------");
   Serial.print("Mode: ");Serial.println(modeVCV);

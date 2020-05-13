@@ -33,14 +33,20 @@
 #include <LiquidCrystal_I2C.h>
 #include <Encoder.h>
 #include <button.h>
+#include <SparkFun_MS5803_I2C.h>
 
-/*--------------------------------- PARAMETERS ---------------------------------*/
+/*------------------------------- PARAMETERS ------------------------------*/
 
 /*************************/
 /*      I2C ADDRESS      */
 /*************************/
 #define I2C_ADDR_MOTOR 8
 #define I2C_ADDR_LCD 0x27
+
+enum I2C_Func{
+  I2C_CMD_MOTOR,
+  I2C_DATA_SETTING
+};
 
 /*************************/
 /*        SETTING        */
@@ -68,7 +74,7 @@ struct MAX_SETTING {
 
 struct MIN_SETTING {
   const int IP = 0;
-  const int TV = 250;
+  const int TV = 100;
   const int RR = 10;
   const int IE = 1;
   const int PEEP = 5;
@@ -140,6 +146,7 @@ struct BUTTON_PIN {
   const int TI = 8;      //TI adjustment button pin
   const int IE = 9;      //IE adjustment button pin
   const int SILENT = A0; //Silence the alarm button pin
+  const int BREATHE = A1;
 };
 
 //P-IN: Hall switch sensor
@@ -157,7 +164,7 @@ struct BUTTON_PIN {
 #define LCD_DISP_COLUMN 20
 
 
-/*--------------------------------- VARIABLE ---------------------------------*/
+/*--------------------------------- VARIABLE ------------------------------*/
 
 /*************************/
 /*     SETTING VALUE     */
@@ -216,9 +223,12 @@ bool disp_modeSet=true; 	//Screen display when start setup mode, true: start wit
 bool disp_modeVCV=true; 	//Screen display mode for setup the elements, true: VCV and false: BPAP
 bool disp_select=false;		//Select the element to adjust.
 bool disp_change=false;     //rotary change status.
-bool isBreathing=false;     //Machine is running or not, true: help breathing & false: standby
 bool isAlarm=false;
-/*--------------------------- STRUCTURE VARIABLES ----------------------------*/
+
+bool isBreathing=false;     //Machine is running or not, true: help breathing & false: standby
+unsigned long breathBTtimer = 0;
+
+/*-------------------------- STRUCTURE VARIABLES ----------------------------*/
 
 /*************************/
 /*  Constant Structure   */
@@ -239,32 +249,43 @@ VCV_MODE VCVsetting, VCVdisplay;
 BPAP_MODE BPAPsetting, BPAPdisplay;
 ROTARY_VALUE rotary;
 
-
 /*------------------------------ New Obj ------------------------------*/
-
 
 LiquidCrystal_I2C lcd(I2C_ADDR_LCD, LCD_DISP_COLUMN, LCD_DISP_ROW);
 Encoder rotaryEnc(rotaryPin.DT, rotaryPin.CLK);
+MS5803 pressure(ADDRESS_HIGH);//  ADDRESS_HIGH = 0x76  or  ADDRESS_LOW  = 0x77
 
 button setBT(buttonPin.SET, HIGH);
 button cancelBT(buttonPin.CANCEL, HIGH);
 button selectBT(buttonPin.SELECT, HIGH);
 button silentBT(buttonPin.SILENT, HIGH);
+button breatheBT(buttonPin.BREATHE, HIGH);
 
-button Hall1(HALL1_PIN, HIGH);
-button Hall2(HALL2_PIN, HIGH);
+button switch1(HALL1_PIN, HIGH);
+button swithc2(HALL2_PIN, HIGH);
 
 void setup() {
   Serial.begin (115200);
+
+  /* Pressure sensor */
+  pressure.reset();
+  pressure.begin();
 
   /* Initialize button */
   setBT.init();
   cancelBT.init();
   selectBT.init();
   silentBT.init();
+  breatheBT.init();
+
+  /*Initialize limit switch */
+  switch1.init();
+  swithc2.init();
 
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(LED_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, 0);
+  digitalWrite(LED_PIN, 0);
 
   /*  Initialize LCD   */
   lcd.begin();
@@ -272,13 +293,34 @@ void setup() {
 
   EEPROM_read();
   SETTING2DISPLAY();
-  wireData(I2C_ADDR_MOTOR);
+  wireData(I2C_ADDR_MOTOR, I2C_DATA_SETTING);
 
   startUpScreen();
 }
 
 void loop() {
+  /*  Breathe button action
+   * - Push to run (start to move with current setting data)
+   * - Hold for 2 seconds to stop (return arms to home position)
+   */
+  if (!isBreathing && breatheBT.push()){
+    breatheBT.resetHold();
+    Beep(2, 200);
+    isBreathing = true; // Run the motor
+    wireData(I2C_ADDR_MOTOR, I2C_CMD_MOTOR);
+  }else if (isBreathing && breatheBT.onHold()>=2000){
+    breatheBT.resetHold();
+    Beep(2, 200);
+    isBreathing = false; // Run the motor
+    wireData(I2C_ADDR_MOTOR, I2C_CMD_MOTOR);
+  }
+
+  /*  Control panel action
+   *
+   */
+
   rotary.Value = rotaryEnc.read()/2;
+
   //Setting Display
   if(inSetting){
   	if(disp_modeSet){	//Select mode for setting
@@ -450,7 +492,7 @@ void loop() {
   		if (setBT.onHold()>=1500){
         setBT.resetHold();
   			Beep(2,200);
-  			wireData(I2C_ADDR_MOTOR);
+  			wireData(I2C_ADDR_MOTOR, I2C_DATA_SETTING);
   			inSetting = false; //Jump to display current setting
   			//TODO: Transfer data to Slave
   		}
@@ -495,7 +537,8 @@ void loop() {
   		disp_modeSet = false;	//Jump to change current setting
   	}
   }
- 
+  
+  pressure.getPressure(ADC_4096); //read pressure sensor, takes 10ms
   lcdDiplay(Screen);
 }
 
@@ -795,20 +838,28 @@ void EEPROM_read(){
 }
 
 
-void wireData(uint8_t _add){
+void wireData(uint8_t _add, I2C_Func _func){
   Wire.beginTransmission(_add);
-  Wire.write(modeVCV);
+  Wire.write(_func);
 
-  Wire.write(VCVsetting.IP);    
-  Wire.write(int(VCVsetting.TV*singleByteConst.TV));
-  Wire.write(VCVsetting.RR); 
-  Wire.write(int(VCVsetting.IE*singleByteConst.IE)); 
-  Wire.write(VCVsetting.PEEP); 
+  switch (_func) {
+      case I2C_CMD_MOTOR:     // Send motor cmd to slave
+        Wire.write((int)isBreathing);
+        break;
 
-  Wire.write(BPAPsetting.IP);
-  Wire.write(BPAPsetting.PEEP); 
-  Wire.write(BPAPsetting.TP); 
-  Wire.write(int(BPAPsetting.FST*singleByteConst.FST)); 
+      case I2C_DATA_SETTING:  // Send setting data to slave
+        Wire.write(modeVCV);
+        Wire.write(VCVsetting.IP);    
+        Wire.write(int(VCVsetting.TV*singleByteConst.TV));
+        Wire.write(VCVsetting.RR); 
+        Wire.write(int(VCVsetting.IE*singleByteConst.IE)); 
+        Wire.write(VCVsetting.PEEP); 
+        Wire.write(BPAPsetting.IP);
+        Wire.write(BPAPsetting.PEEP); 
+        Wire.write(BPAPsetting.TP); 
+        Wire.write(int(BPAPsetting.FST*singleByteConst.FST));
+        break;
+  }
 
   Wire.endTransmission();
 }
