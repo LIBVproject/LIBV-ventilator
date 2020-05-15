@@ -20,8 +20,8 @@
  * - TV: Tidal Volume                                   ml
  * - BPM: Breaths Per Minute
  * - IE: Inspiratory/Expiratory ratio
- * - PEEP:                                              cm.H20
- * - PIP: 
+ * - PEEP: Positive End-Expiratory Pressure             cm.H20
+ * - PIP: Peak Inspiratory Pressure 
  * - TP: Trigger Pressure                               cm.H20
  * - FST: Failsafe Time ratio
  * - RR: Resporatory Rate 								Breathe Per minutes
@@ -194,6 +194,14 @@ struct ROTARY_VALUE {
 /*    DISPLAY ON LCD     */
 /*************************/
 
+struct ACTUAL_DISPLAY{
+  float pressureRead;
+  float capturePIP;
+  float capturePEEP;
+  float PIP;
+  float PEEP;
+};
+
 enum  screenID {
   scr_PowerON,
   scr_Setting_VCV,
@@ -218,10 +226,10 @@ enum  screenID {
 uint8_t Screen=scr_PowerON;
 
 bool modeVCV=true;
-bool inSetting=false; // true: display setting adjusment, false: save setting and display current setting.
-bool disp_modeSet=true; 	//Screen display when start setup mode, true: start with chosing VCV or BPAP, false: go to element setup
-bool disp_modeVCV=true; 	//Screen display mode for setup the elements, true: VCV and false: BPAP
-bool disp_select=false;		//Select the element to adjust.
+bool inSetting=false;       // true: display setting adjusment, false: save setting and display current setting.
+bool disp_modeSet=true; 	  //Screen display when start setup mode, true: start with chosing VCV or BPAP, false: go to element setup
+bool disp_modeVCV=true; 	  //Screen display mode for setup the elements, true: VCV and false: BPAP
+bool disp_select=false;		  //Select the element to adjust.
 bool disp_change=false;     //rotary change status.
 bool isAlarm=false;
 
@@ -248,12 +256,13 @@ BUTTON_PIN buttonPin;
 VCV_MODE VCVsetting, VCVdisplay;
 BPAP_MODE BPAPsetting, BPAPdisplay;
 ROTARY_VALUE rotary;
+ACTUAL_DISPLAY actual;
 
 /*------------------------------ New Obj ------------------------------*/
 
 LiquidCrystal_I2C lcd(I2C_ADDR_LCD, LCD_DISP_COLUMN, LCD_DISP_ROW);
 Encoder rotaryEnc(rotaryPin.DT, rotaryPin.CLK);
-MS5803 pressure(ADDRESS_HIGH);//  ADDRESS_HIGH = 0x76  or  ADDRESS_LOW  = 0x77
+MS5803 pressure(ADDRESS_LOW);//  ADDRESS_HIGH = 0x76  or  ADDRESS_LOW  = 0x77
 
 button setBT(buttonPin.SET, HIGH);
 button cancelBT(buttonPin.CANCEL, HIGH);
@@ -305,15 +314,33 @@ void loop() {
    */
   if (!isBreathing && breatheBT.push()){
     breatheBT.resetHold();
-    Beep(2, 200);
+    Beep(3, 100);
     isBreathing = true; // Run the motor
     wireData(I2C_ADDR_MOTOR, I2C_CMD_MOTOR);
   }else if (isBreathing && breatheBT.onHold()>=2000){
     breatheBT.resetHold();
-    Beep(2, 200);
+    Beep(3, 100);
     isBreathing = false; // Run the motor
     wireData(I2C_ADDR_MOTOR, I2C_CMD_MOTOR);
   }
+
+  /* Read Pressure
+   * - Capture PIP and PEEP for actual displays
+   */
+  actual.pressureRead = 1.02 * pressure.getPressure(ADC_4096); //pressure in cmH2O
+  
+  //Capture PIP and PEEP
+  if (actual.pressureRead>actual.capturePIP) actual.capturePIP = actual.pressureRead;
+  if (actual.pressureRead<actual.capturePEEP) actual.capturePEEP = actual.pressureRead;
+
+  //Reset PIP and PEEP value when inhale starts, and display
+  if (switch1.release() || swithc2.release()){
+    actual.PIP = actual.capturePIP;
+    actual.PEEP = actual.capturePEEP;
+    actual.capturePIP = 0.0;
+    actual.capturePEEP = 40.0;
+  }
+
 
   /*  Control panel action
    *
@@ -507,8 +534,8 @@ void loop() {
   	//TODO : display current setting
   	if (modeVCV){
   		if (isBreathing){
-  			//TODO: Display Actual data
   			//TODO: Checking Alarm
+        Screen = scr_VCVDisplay_Actual;
   			if (isAlarm){
   				//TODO: Trigger Alarm function
   				//TODO: if select is pressed, show current setting
@@ -537,8 +564,7 @@ void loop() {
   		disp_modeSet = false;	//Jump to change current setting
   	}
   }
-  
-  pressure.getPressure(ADC_4096); //read pressure sensor, takes 10ms
+
   lcdDiplay(Screen);
 }
 
@@ -653,8 +679,8 @@ void lcdDiplay(uint8_t _screen){
       case scr_VCVDisplay_Actual:
         //           -----------------------
         dispRow.R1 = "     VCV ACTUAL     ";
-        dispRow.R2 = " PA 40cm            ";
-        dispRow.R3 = " TV 200ml  PIP 40cm ";
+        dispRow.R2 = " PIP  "+(String)actual.PIP+"cm    ";
+        dispRow.R3 = " PEEP "+(String)actual.PEEP+"cm    ";
         dispRow.R4 = "   <SEE SETTING>    ";
         //           -----------------------
         break;

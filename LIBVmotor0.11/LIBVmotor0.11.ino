@@ -122,7 +122,7 @@ float goSpeed=0.0, aSpeed=0.0;    //Target Speed, current Speed
 int cmd;                          //digital command from PID, the PWM value
 
 //Setting Variable
-#define RPB 0.335           //Number of round to rotate to one breath inhale
+#define RPB 0.4           //Number of round to rotate to one breath inhale
 int TV, TI, IE;
 float TV_MIN=0, TV_MAX=800;
 double TV2RPB=0.0;
@@ -211,18 +211,7 @@ void loop() {
   if(!breathing){
   	speedMov = speedOut;
     goPos = ZERO; //go to HOME position
-    /*
-    if(BREATH_BUT.push()) {
-    	breathing=true; //Run breathing
-    	BREATH_BUT.resetHold();
-	   }*/
   }else{
-    /*
-    if(BREATH_BUT.onHold()>=2000) {
-    	breathing=false;
-    	BREATH_BUT.resetHold();
-    }*/
-
     switch(venStat){
       case pushIN:
         goPos = TV2RPB;
@@ -382,7 +371,7 @@ float camPosition(int _tv){
 	      break;
 
 	    case 800:
-	      return 0.335;//
+	      return 0.45;//0.335
 	      break;
 
 	    default:
