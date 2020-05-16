@@ -34,6 +34,7 @@
 #include <Encoder.h>
 #include <button.h>
 #include <SparkFun_MS5803_I2C.h>
+#include <SFE_BMP180.h>
 
 /*------------------------------- PARAMETERS ------------------------------*/
 
@@ -236,6 +237,8 @@ bool isAlarm=false;
 bool isBreathing=false;     //Machine is running or not, true: help breathing & false: standby
 unsigned long breathBTtimer = 0;
 
+bool pressureSensor = false;
+
 /*-------------------------- STRUCTURE VARIABLES ----------------------------*/
 
 /*************************/
@@ -262,7 +265,8 @@ ACTUAL_DISPLAY actual;
 
 LiquidCrystal_I2C lcd(I2C_ADDR_LCD, LCD_DISP_COLUMN, LCD_DISP_ROW);
 Encoder rotaryEnc(rotaryPin.DT, rotaryPin.CLK);
-MS5803 pressure(ADDRESS_LOW);//  ADDRESS_HIGH = 0x76  or  ADDRESS_LOW  = 0x77
+//MS5803 pressure(ADDRESS_LOW);//  ADDRESS_HIGH = 0x76  or  ADDRESS_LOW  = 0x77
+SFE_BMP180 BMP180;
 
 button setBT(buttonPin.SET, HIGH);
 button cancelBT(buttonPin.CANCEL, HIGH);
@@ -275,10 +279,6 @@ button swithc2(HALL2_PIN, HIGH);
 
 void setup() {
   Serial.begin (115200);
-
-  /* Pressure sensor */
-  pressure.reset();
-  pressure.begin();
 
   /* Initialize button */
   setBT.init();
@@ -305,6 +305,16 @@ void setup() {
   wireData(I2C_ADDR_MOTOR, I2C_DATA_SETTING);
 
   startUpScreen();
+
+  /* Pressure sensor */
+  pressureSensor = pressureBEGIN();
+  if (!pressureSensor){
+    //pressure sensor fail, Alarm
+    while(1){
+      Beep(3, 400);
+      if (cancelBT.push()) break;  //Skip pressure sensor
+    }
+  }
 }
 
 void loop() {
@@ -317,6 +327,7 @@ void loop() {
     Beep(3, 100);
     isBreathing = true; // Run the motor
     wireData(I2C_ADDR_MOTOR, I2C_CMD_MOTOR);
+    Screen = modeVCV? scr_VCVDisplay_Actual:scr_BPAPDisplay_Actual;
   }else if (isBreathing && breatheBT.onHold()>=2000){
     breatheBT.resetHold();
     Beep(3, 100);
@@ -327,19 +338,25 @@ void loop() {
   /* Read Pressure
    * - Capture PIP and PEEP for actual displays
    */
-  actual.pressureRead = 1.02 * pressure.getPressure(ADC_4096); //pressure in cmH2O
+  actual.pressureRead = pressureCMH2O(); //pressure in cmH2O
   
-  //Capture PIP and PEEP
+  //record PIP and PEEP pressure
   if (actual.pressureRead>actual.capturePIP) actual.capturePIP = actual.pressureRead;
   if (actual.pressureRead<actual.capturePEEP) actual.capturePEEP = actual.pressureRead;
 
-  //Reset PIP and PEEP value when inhale starts, and display
-  if (switch1.release() || swithc2.release()){
+  //Capture PIP when Arms arrived at Home position
+  if (switch1.push() || swithc2.push()){
     actual.PIP = actual.capturePIP;
-    actual.PEEP = actual.capturePEEP;
     actual.capturePIP = 0.0;
+  }
+
+  //Capture PEEP when Arms left home position
+  if (switch1.release() || swithc2.release()){
+    actual.PEEP = actual.capturePEEP;
     actual.capturePEEP = 40.0;
   }
+
+  
 
 
   /*  Control panel action
@@ -520,8 +537,8 @@ void loop() {
         setBT.resetHold();
   			Beep(2,200);
   			wireData(I2C_ADDR_MOTOR, I2C_DATA_SETTING);
+        Screen = modeVCV? scr_VCVDisplay_Actual:scr_BPAPDisplay_Actual;
   			inSetting = false; //Jump to display current setting
-  			//TODO: Transfer data to Slave
   		}
 
   	}
@@ -534,15 +551,32 @@ void loop() {
   	//TODO : display current setting
   	if (modeVCV){
   		if (isBreathing){
-  			//TODO: Checking Alarm
-        Screen = scr_VCVDisplay_Actual;
+
+        //TODO: check the alarm
+
+        /* Alarm off */
   			if (isAlarm){
   				//TODO: Trigger Alarm function
   				//TODO: if select is pressed, show current setting
-  			}
+          if (selectBT.push()){
+            Beep();
+            Screen++;
+            if (Screen > scr_VCVAlarm) Screen = scr_VCVDisplay_Actual;
+          }
+
+  			}else{
+          /* Switch screen */
+          if (selectBT.push()){
+            Beep();
+            Screen++;
+            if (Screen > scr_VCVDisplay_Setting) Screen = scr_VCVDisplay_Actual;
+          }
+        }
+
   		}else{
   			Screen = scr_VCVDisplay_Setting;
   		}
+
   	}else{
   		if (isBreathing){
   			//TODO: Display Actual data
@@ -566,6 +600,37 @@ void loop() {
   }
 
   lcdDiplay(Screen);
+}
+
+bool pressureBEGIN(){
+  return BMP180.begin();  //return sensor initialize status
+}
+
+float pressureCMH2O(){
+  float pressure_cmH2O = 0.0;
+
+  if (pressureSensor){
+    const float atmospheric_pressure = 1013.25; //mbar
+    char status;
+    double T,P;
+    status = BMP180.startTemperature();
+    if (status != 0){
+      delay(status); // Wait for the measurement to complete
+      status = BMP180.getTemperature(T);
+      if (status != 0){
+        status = BMP180.startPressure(3);
+        if (status != 0){
+          delay(status); // Wait for the measurement to complete
+          status = BMP180.getPressure(P,T);
+          if (status != 0){
+            pressure_cmH2O = (P - atmospheric_pressure)*1.02; //cmH2O = mbar * 1.02
+          }
+        }
+      }
+    }
+  }
+  
+  return pressure_cmH2O;
 }
 
 void startUpScreen(){
@@ -864,8 +929,8 @@ void EEPROM_read(){
 }
 
 
-void wireData(uint8_t _add, I2C_Func _func){
-  Wire.beginTransmission(_add);
+void wireData(uint8_t _addr, I2C_Func _func){
+  Wire.beginTransmission(_addr);
   Wire.write(_func);
 
   switch (_func) {

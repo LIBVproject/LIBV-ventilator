@@ -371,7 +371,7 @@ float camPosition(int _tv){
 	      break;
 
 	    case 800:
-	      return 0.45;//0.335
+	      return 0.335;//0.335
 	      break;
 
 	    default:
