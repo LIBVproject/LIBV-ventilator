@@ -338,7 +338,7 @@ void loop() {
   /* Read Pressure
    * - Capture PIP and PEEP for actual displays
    */
-  actual.pressureRead = pressureCMH2O(); //pressure in cmH2O
+  bool pressurStatus= pressureCMH2O(actual.pressureRead); //pressure in cmH2O
   
   //record PIP and PEEP pressure
   if (actual.pressureRead>actual.capturePIP) actual.capturePIP = actual.pressureRead;
@@ -355,8 +355,6 @@ void loop() {
     actual.PEEP = actual.capturePEEP;
     actual.capturePEEP = 40.0;
   }
-
-  
 
 
   /*  Control panel action
@@ -606,9 +604,8 @@ bool pressureBEGIN(){
   return BMP180.begin();  //return sensor initialize status
 }
 
-float pressureCMH2O(){
-  float pressure_cmH2O = 0.0;
-
+bool pressureCMH2O(float &_pressure){
+  bool _status = false;
   if (pressureSensor){
     const float atmospheric_pressure = 1013.25; //mbar
     char status;
@@ -618,19 +615,20 @@ float pressureCMH2O(){
       delay(status); // Wait for the measurement to complete
       status = BMP180.getTemperature(T);
       if (status != 0){
-        status = BMP180.startPressure(3);
+        status = BMP180.startPressure(3); //3 highest precision
         if (status != 0){
           delay(status); // Wait for the measurement to complete
           status = BMP180.getPressure(P,T);
           if (status != 0){
-            pressure_cmH2O = (P - atmospheric_pressure)*1.02; //cmH2O = mbar * 1.02
+            _pressure = (P - atmospheric_pressure)*1.02; //cmH2O = mbar * 1.02
+            _status = true; //no error
           }
         }
       }
     }
   }
   
-  return pressure_cmH2O;
+  return _status;
 }
 
 void startUpScreen(){
@@ -759,7 +757,7 @@ void lcdDiplay(uint8_t _screen){
         //           -----------------------
         break;
 
-      case scr_VCVAlarm:
+      case scr_VCVAlarm: 
         //           -----------------------
         dispRow.R1 = "   >>> ALARM <<<    ";
         dispRow.R2 = "                    ";
