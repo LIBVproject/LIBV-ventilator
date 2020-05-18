@@ -123,29 +123,39 @@ int cmd;                          //digital command from PID, the PWM value
 
 //Setting Variable
 #define RPB 0.4           //Number of round to rotate to one breath inhale
-int TV, TI, IE;
-float TV_MIN=0, TV_MAX=800;
-double TV2RPB=0.0;
+float TV2RPB=0.0;
 //bool pushIn=false;                  //define action of push IN or release the bag
-int timeIn, timeOut, timeRest;                //time to push in and push out in millisecond
-double speedIn, speedOut, speedMov;  //speed to push in and push out of the motor, in round per second (rps)
+double speedSet = 0.0;  //speed to push in and push out of the motor, in round per second (rps)
+
 unsigned long timer=0;              //to store the timer of running, millis(), millisecond
+bool isBreathing=false;     //Machine is running or not, true: help breathing & false: standby
+uint8_t state = 0;
+enum States{
+  INHALE,       //0
+  PLATEAU,      //1
+  EXHALE,       //2
+  REST          //3
+};
 
-//VAR: Ven stat
-int venStat=0;
-const int pushIN=0;
-const int pushOUT=1;
-const int pushRest=2;
+struct STATE_TIMER{
+  uint16_t inhale;
+  uint16_t plateau = 100;
+  uint16_t exhale;
+  uint16_t rest;
+};
 
-//VAR: Breath Button
-bool breathing = false;
-bool brth_hold_stat = false;
-const int brth_hold_time = 2000;
+struct STATE_SPEED{
+  double inhale;
+  double exhale;
+};
+
 
 EEPROM_ADDR EEPROMaddress;
 VCV_MODE VCVsetting;
 BPAP_MODE BPAPsetting;
 SINGLE_BYTE_CONST singleByteConst;
+STATE_TIMER timing;
+STATE_SPEED speed;
 
 simplePID PiD(Kp, Ki);      //Kp, Ki, use only PI, name it to "PiD"
 ramp Ramp(1.0, 2.0, 0.005); //Acceleration, Max Speed, Tolerance, name it to "Ramp"
@@ -208,47 +218,53 @@ void setup() {
 void loop() {
   //readSerial();  //Testing cmd from Serial
 
-  if(!breathing){
-  	speedMov = speedOut;
+  if(!isBreathing){
+  	speedSet = speed.exhale;
     goPos = ZERO; //go to HOME position
   }else{
-    switch(venStat){
-      case pushIN:
+    switch(state){
+      case INHALE:
         goPos = TV2RPB;
-        speedMov = speedIn;
+        speedSet = speed.inhale;
         
         /*
         if(millis()-timer>=timeIn || abs(goPos-aPos)<=0.04){
           timer = millis();
           venStat = pushOUT;
         }
-		*/
+		    */
 
         if(abs(goPos-aPos)<=0.01) {
         	timer = millis();
-        	venStat = pushOUT; //reached desire position, move on
+        	state = PLATEAU; //reached desire position, move on
         }
         break;
 
-      case pushOUT:
+      case PLATEAU:
+        speedSet = ZERO;
+        if (millis()-timer >= timing.plateau){
+          timer = millis();
+          state = EXHALE;
+        }
+        break;
+
+      case EXHALE:
         goPos = ZERO;
-        speedMov = speedOut;
-        if(millis()-timer>=timeOut){
+        speedSet = speed.exhale;
+        if(millis()-timer >= timing.exhale){
           timer = millis();
-          venStat = pushRest;
+          state = REST;
         }
         break;
 
-      case pushRest:
-        if(millis()-timer>=timeRest){
+      case REST:
+        if(millis()-timer>= timing.rest){
           timer = millis();
-          venStat = pushIN;
+          state = INHALE;
         }
         break;
     }
-
   }
-
   MotorControl();
 }
 
@@ -266,7 +282,7 @@ void MotorControl(){
     xEn=En;                             //Passing last encoder value
   }
   
-  if(abs(goPos-aPos)<1.1 && abs(goPos-aPos)>0.05) goSpeed = speedMov;
+  if(abs(goPos-aPos)<1.1 && abs(goPos-aPos)>0.05) goSpeed = speedSet;
   else goSpeed = Ramp.cmd(goPos, aPos, dt); 
   //goSpeed = Ramp.cmd(goPos, aPos, dt);
   goSpeed *= 1.4;         //Mantain the 40% speed, PiD drop to correct the error (bad tuning) or do the better PiD tuning
@@ -283,31 +299,17 @@ void readSerial() {
   }
 }
 
-//Alarm sound and LED, silent button to silence the alarm for period of time
-void Alarm(bool _stat, int type){
-  //TODO: define alarm type
-  //TODO: trigger the alarm with _stat
-  //TODO: silent button
-}
-
 //Calculate the Breath timing from Setting
 void BPM_Timing(){
-  if (modeVCV)
-  {
-    /*New variable to OLD system for demo*/
-    TV = VCVsetting.TV;
-    IE = VCVsetting.IE;
-    TI = round(60000.0 / (VCVsetting.RR*(1+IE)));
-    /*New variable to OLD system for demo*/
+  if (modeVCV){
+    timing.inhale = round(60000.0 / (VCVsetting.RR*(1+VCVsetting.IE)));
+    timing.exhale = (timing.inhale*VCVsetting.IE)/2.0;
+    timing.rest = timing.exhale - timing.plateau; 
 
-    timeIn = TI;
-    timeOut = (TI*IE)/2.0;
-    timeRest = timeOut; 
-    TV2RPB = min(camPosition(TV), RPB);
-    speedIn = TV2RPB*1000.0/(float)timeIn;
-    speedOut = -(TV2RPB*1000.0/(float)timeOut);
-    Serial.print("TV%: ");
-    Serial.println(TV/TV_MAX);
+    TV2RPB = min(camPosition(VCVsetting.TV), RPB);
+
+    speed.inhale = TV2RPB*1000.0/(float)timing.inhale;
+    speed.exhale = -(TV2RPB*1000.0/(float)timing.exhale);
   }
 
 }
@@ -385,7 +387,7 @@ void receiveEvent(int howMany) {
   uint8_t _func = Wire.read();
   switch (_func) {
       case I2C_CMD_MOTOR:    //Read as motor command
-        breathing = (bool)Wire.read();
+        isBreathing = (bool)Wire.read();
         break;
 
       case I2C_DATA_SETTING: // Read as setting data
