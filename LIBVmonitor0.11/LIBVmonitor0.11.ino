@@ -61,7 +61,7 @@ struct DEFAULT_SETTING {
   const int PEEP = 5;
   const int TP = 2;
   const int FST = 1;
-};
+} defaultSetting;
 
 struct MAX_SETTING {
   const int IP = 60;
@@ -71,7 +71,7 @@ struct MAX_SETTING {
   const int PEEP = 15;
   const int TP = 14;
   const int FST = 3;
-};
+} maxSetting;
 
 struct MIN_SETTING {
   const int IP = 0;
@@ -81,7 +81,7 @@ struct MIN_SETTING {
   const int PEEP = 5;
   const int TP = 2;
   const int FST = 1;
-};
+} minSetting;
 
 
 /*************************/
@@ -104,7 +104,7 @@ struct EEPROM_ADDR {
   const int BPAP_PEEP = 17;
   const int BPAP_TP = 18;
   const int BPAP_FST = 19;
-};
+} EEPROMaddress;
 
 /*************************/
 /*    CONSTANT NUMBER    */
@@ -114,7 +114,7 @@ struct SINGLE_BYTE_CONST {
   const float TV = 0.1;
   const float IE = 10.0;
   const float FST= 10.0;
-};
+} singleByteConst;
 
 //Each step changing of rotary encoders
 struct ROTARY_STEP_CHANGE {
@@ -125,8 +125,7 @@ struct ROTARY_STEP_CHANGE {
   const int PEEP = 1;
   const int TP = 1;
   const float FST = 0.5;
-};
-
+} stepChange;
 
 
 /*************************/
@@ -137,7 +136,7 @@ struct ROTARY_PIN {
   const int CLK = 2;
   const int DT = 3;
   const int SW = 4;
-};
+} rotaryPin;
 
 //P-IN: Button on control panel
 struct BUTTON_PIN {
@@ -148,7 +147,7 @@ struct BUTTON_PIN {
   const int IE = 9;      //IE adjustment button pin
   const int SILENT = A0; //Silence the alarm button pin
   const int BREATHE = A1;
-};
+} buttonPin;
 
 //P-IN: Hall switch sensor
 #define HALL1_PIN 11
@@ -224,6 +223,11 @@ enum  screenID {
   scr_BPAPlarm
 };
 
+struct TIMING{
+  const long main_scr_timout = 500;        // back to main screen timout, after no change for 30s
+  unsigned long main_scr_timer = 0;        // Reset at Beep function
+} timing;
+
 uint8_t Screen=scr_PowerON;
 
 bool modeVCV=true;
@@ -240,18 +244,6 @@ unsigned long breathBTtimer = 0;
 bool pressureSensor = false;
 
 /*-------------------------- STRUCTURE VARIABLES ----------------------------*/
-
-/*************************/
-/*  Constant Structure   */
-/*************************/
-DEFAULT_SETTING defaultSetting;
-MAX_SETTING maxSetting;
-MIN_SETTING minSetting;
-ROTARY_STEP_CHANGE stepChange;
-SINGLE_BYTE_CONST singleByteConst;
-EEPROM_ADDR EEPROMaddress;
-ROTARY_PIN rotaryPin;
-BUTTON_PIN buttonPin;
 
 /*************************/
 /*  Variable Structure   */
@@ -356,6 +348,14 @@ void loop() {
     actual.capturePEEP = 40.0;
   }
 
+  /* Back to main screen after timout */
+  if (millis()-timing.main_scr_timer >= timing.main_scr_timout) {
+    if (isBreathing) {
+      Screen = modeVCV ? scr_VCVDisplay_Actual : scr_BPAPDisplay_Actual;
+    }else{
+      Screen = modeVCV ? scr_VCVDisplay_Setting : scr_BPAPDisplay_Setting;
+    }
+  }
 
   /*  Control panel action
    *
@@ -378,12 +378,13 @@ void loop() {
   			Screen = disp_modeVCV ? scr_VCVSetting_IP : scr_BPAPSetting_IP; //Start screen at first element
   			delay(300);
   		}
+
   		else if(cancelBT.push()) { //Back to current current setting display
   			Beep();
+        Screen = disp_modeVCV ? scr_VCVDisplay_Actual : scr_BPAPDisplay_Actual; 
   			inSetting = false;	//Cancel current adjusting, jump to last setting display
   		}
 
-  		
   	}else{	//After mode is selected, elements adjusting
   		if(disp_modeVCV){	//Adjust VCV elements
   			if (selectBT.push()){
@@ -576,6 +577,7 @@ void loop() {
   		}
 
   	}else{
+
   		if (isBreathing){
   			//TODO: Display Actual data
   			//TODO: Checking Alarm 
@@ -854,12 +856,14 @@ void lcdDiplay(uint8_t _screen){
 }
 
 void Beep(){
+    timing.main_scr_timer = millis(); // Reset back to main screen timer
     digitalWrite(BUZZER_PIN, 1);
     delay(5);
     digitalWrite(BUZZER_PIN, 0);
 }
 
 void Beep(int _num, long _t){
+  timing.main_scr_timer = millis(); // Reset back to main screen timer
   for(int i=1; i<=_num; i++){
     delay(_t);
     digitalWrite(BUZZER_PIN, 1);
@@ -953,8 +957,8 @@ void wireData(uint8_t _addr, I2C_Func _func){
   Wire.endTransmission();
 }
 
-bool inRange(int a, int x, int y){
-	return (a >= x) && (a <= y);
+bool inRange(int _val, int _min, int _max){
+	return (_val >= _min) && (_val <= _max);
 }
 
 //birth to 6 weeks: 30–40 breaths per minute

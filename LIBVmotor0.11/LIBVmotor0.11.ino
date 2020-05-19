@@ -223,6 +223,7 @@ void loop() {
     goPos = ZERO; //go to HOME position
   }else{
     switch(state){
+      /* Inhale state*/
       case INHALE:
         goPos = TV2RPB;
         speedSet = speed.inhale;
@@ -240,6 +241,7 @@ void loop() {
         }
         break;
 
+      /* Meassuring Plateau Pressure */
       case PLATEAU:
         speedSet = ZERO;
         if (millis()-timer >= timing.plateau){
@@ -248,6 +250,7 @@ void loop() {
         }
         break;
 
+      /* Exhal state */
       case EXHALE:
         goPos = ZERO;
         speedSet = speed.exhale;
@@ -257,6 +260,7 @@ void loop() {
         }
         break;
 
+      /* Motor rest */
       case REST:
         if(millis()-timer>= timing.rest){
           timer = millis();
@@ -303,7 +307,7 @@ void readSerial() {
 void BPM_Timing(){
   if (modeVCV){
     timing.inhale = round(60000.0 / (VCVsetting.RR*(1+VCVsetting.IE)));
-    timing.exhale = (timing.inhale*VCVsetting.IE)/2.0;
+    timing.exhale = (timing.inhale*VCVsetting.IE)/2.0; //exhale time is haft of it and the rest is motor's resting 
     timing.rest = timing.exhale - timing.plateau; 
 
     TV2RPB = min(camPosition(VCVsetting.TV), RPB);
