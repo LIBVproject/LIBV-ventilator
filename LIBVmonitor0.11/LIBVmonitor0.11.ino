@@ -225,10 +225,17 @@ enum  screenID {
 
 struct TIMING{
   const long main_scr_timout = 20000;        // back to main screen timout, after no change for 30s
-  unsigned long main_scr_timer = 0;        // Reset at Beep function
+  long main_scr_timer = 0;                   // Reset at Beep function
 } timing;
 
-uint8_t Screen=scr_PowerON;
+struct ALARMING{
+  const long silent_timout = 600000;  // silent buzzer for 10mn after silent button is pusheed
+  long off_timer = 0;                 // reset alarm loop
+  long silent_timer = 0;              // reset silent buzzer
+  bool buzzer_is_silent = false;      // buzzer sound state
+} alarming;
+
+uint8_t Screen=scr_PowerON;           //Screen display ID, start with Power On screen
 
 bool modeVCV=true;
 bool inSetting=false;       // true: display setting adjusment, false: save setting and display current setting.
@@ -239,7 +246,7 @@ bool disp_change=false;     //rotary change status.
 bool isAlarm=false;
 
 bool isBreathing=false;     //Machine is running or not, true: help breathing & false: standby
-unsigned long breathBTtimer = 0;
+
 
 bool pressureSensor = false;
 
@@ -423,34 +430,34 @@ void loop() {
 
   			    case scr_VCVSetting_RR:
   			      if (rotary.Value != rotary.lastValue){ //Rotary changing Event
-  						rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
-  						rotary.lastValue = rotary.Value; //Reset rotary change
-  						VCVdisplay.RR += rotary.Change*stepChange.RR; //Changing value with rotary move, each step change by stepChange value
-  						if(inRange(VCVdisplay.RR, minSetting.RR, maxSetting.RR)) Beep(); //Beep only when data in limit range.
-  						disp_change = true; //sth has changed.
-  				  }
+  						  rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
+  						  rotary.lastValue = rotary.Value; //Reset rotary change
+  						  VCVdisplay.RR += rotary.Change*stepChange.RR; //Changing value with rotary move, each step change by stepChange value
+  						  if(inRange(VCVdisplay.RR, minSetting.RR, maxSetting.RR)) Beep(); //Beep only when data in limit range.
+  						  disp_change = true; //sth has changed.
+  				    }
   			      VCVdisplay.RR = constrain(VCVdisplay.RR, minSetting.RR, maxSetting.RR); //Keep value in range (Minimum - Maximum)
   			      break;
 
   			    case scr_VCVSetting_IE:
   			      if (rotary.Value != rotary.lastValue){ //Rotary changing Event
-  						rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
-  						rotary.lastValue = rotary.Value; //Reset rotary change
-  						VCVdisplay.IE += rotary.Change*stepChange.IE; //Changing value with rotary move, each step change by stepChange value
-  						if(inRange(VCVdisplay.IE, minSetting.IE, maxSetting.IE)) Beep(); //Beep only when data in limit range.
-  						disp_change = true; //sth has changed.
-  				  }
+  						  rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
+  						  rotary.lastValue = rotary.Value; //Reset rotary change
+  						  VCVdisplay.IE += rotary.Change*stepChange.IE; //Changing value with rotary move, each step change by stepChange value
+  						  if(inRange(VCVdisplay.IE, minSetting.IE, maxSetting.IE)) Beep(); //Beep only when data in limit range.
+  						  disp_change = true; //sth has changed.
+  				    }
   			      VCVdisplay.IE = constrain(VCVdisplay.IE, minSetting.IE, maxSetting.IE); //Keep value in range (Minimum - Maximum)
   			      break;
 
   			    case scr_VCVSetting_PEEP:
   			      if (rotary.Value != rotary.lastValue){ //Rotary changing Event
-  						rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
-  						rotary.lastValue = rotary.Value; //Reset rotary change
-  						VCVdisplay.PEEP += rotary.Change*stepChange.PEEP; //Changing value with rotary move, each step change by stepChange value
-  						if(inRange(VCVdisplay.PEEP, minSetting.PEEP, maxSetting.PEEP)) Beep(); //Beep only when data in limit range.
-  						disp_change = true; //sth has changed.
-  				  }
+  						  rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
+  						  rotary.lastValue = rotary.Value; //Reset rotary change
+  						  VCVdisplay.PEEP += rotary.Change*stepChange.PEEP; //Changing value with rotary move, each step change by stepChange value
+  						  if(inRange(VCVdisplay.PEEP, minSetting.PEEP, maxSetting.PEEP)) Beep(); //Beep only when data in limit range.
+  						  disp_change = true; //sth has changed.
+  				    }
   			      VCVdisplay.PEEP = constrain(VCVdisplay.PEEP, minSetting.PEEP, maxSetting.PEEP); //Keep value in range (Minimum - Maximum)
   			      break;
 
@@ -543,15 +550,10 @@ void loop() {
         Screen = modeVCV? scr_VCVDisplay_Actual:scr_BPAPDisplay_Actual;
   			inSetting = false; //Jump to display current setting
   		}
-
   	}
   	
   }else{
-
-  	/*Working space*/
-
   	rotary.lastValue = rotary.Value; //Reset rotary change accidently
-  	//TODO : display current setting
   	if (modeVCV){
   		if (isBreathing){
 
@@ -559,7 +561,31 @@ void loop() {
 
         /* Alarm off */
   			if (isAlarm){
-  				//TODO: Trigger Alarm function
+          /* Silent button event
+           * push to silent the buzzer for silinet_timout
+           * trigger buzzer silent state to true (silent is true)
+           * retrigger buzzer state comparing by silent_timer and millis
+           */
+          if (silentBT.push()){
+            silentBT.resetHold();
+            alarming.buzzer_is_silent = true;
+            alarming.silent_timer = millis();
+          }
+          //Reset the buzzer alarm state to not silent
+          if (alarming.buzzer_is_silent){
+            alarming.buzzer_is_silent = (millis()-alarming.silent_timer<=alarming.silent_timout);
+          }
+
+          /* Alarm trigger
+           * Flash LED and Sound the alarm with specific alarm type (num)
+           * recording timer for alarm loop sound
+           * buzzer state for silent the buzzer but keep the LED flash
+           */
+          Alarm(2, alarming.off_timer, alarming.buzzer_is_silent);
+          
+          /* Switch Screen (Select button)
+           * Can switch between, Alarm Display, Setting Display & Actual Display
+           */
           if (selectBT.push()){
             Beep();
             Screen++;
@@ -567,7 +593,14 @@ void loop() {
           }
 
   			}else{
-          /* Switch screen */
+
+          // Reset Alarm timer
+          alarming.silent_timer = millis();
+          alarming.off_timer = millis();
+
+          /* Switch screen (Select button)
+           * toggle between Actual Display & Setting Display
+           */
           if (selectBT.push()){
             Beep();
             Screen++;
@@ -580,6 +613,8 @@ void loop() {
   		}
 
   	}else{
+
+      //TODO: Update same to VCV mode
 
   		if (isBreathing){
   			//TODO: Display Actual data
@@ -854,9 +889,13 @@ void lcdDiplay(uint8_t _screen){
   lcd.print(dispRow.R3);
   lcd.setCursor(0,3);
   lcd.print(dispRow.R4);
+}
 
-void Alarm(uint8_t _num, long &_alarm_timer, bool _buzzer){
+void Alarm(uint8_t _num, long &_alarm_timer, bool _silent_buzzer){
   uint16_t _delay, _sound_num, _loop_timer;
+
+  // TODO: define the alarm type (_num)
+
   switch (_num) {
       case 1:
         _delay = 200;
@@ -873,7 +912,7 @@ void Alarm(uint8_t _num, long &_alarm_timer, bool _buzzer){
   if (millis()-_alarm_timer >= _loop_timer) {
     for (int i = 0; i < _sound_num; ++i){
       delay(_delay);
-      digitalWrite(BUZZER_PIN, _buzzer);
+      digitalWrite(BUZZER_PIN, !_silent_buzzer);
       digitalWrite(LED_PIN, 1);
       delay(20);
       digitalWrite(LED_PIN, 0);
