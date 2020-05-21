@@ -224,7 +224,7 @@ enum  screenID {
 };
 
 struct TIMING{
-  const long main_scr_timout = 500;        // back to main screen timout, after no change for 30s
+  const long main_scr_timout = 20000;        // back to main screen timout, after no change for 30s
   unsigned long main_scr_timer = 0;        // Reset at Beep function
 } timing;
 
@@ -328,28 +328,32 @@ void loop() {
   }
 
   /* Read Pressure
+   * - Check pressure sensor status for Alarm
    * - Capture PIP and PEEP for actual displays
    */
-  bool pressurStatus= pressureCMH2O(actual.pressureRead); //pressure in cmH2O
-  
+  pressureSensor = pressureCMH2O(actual.pressureRead); //pressure in cmH2O
+  Serial.println(actual.pressureRead);
   //record PIP and PEEP pressure
   if (actual.pressureRead>actual.capturePIP) actual.capturePIP = actual.pressureRead;
   if (actual.pressureRead<actual.capturePEEP) actual.capturePEEP = actual.pressureRead;
 
   //Capture PIP when Arms arrived at Home position
-  if (switch1.push() || swithc2.push()){
+  if (swithc2.push()){
     actual.PIP = actual.capturePIP;
     actual.capturePIP = 0.0;
   }
 
   //Capture PEEP when Arms left home position
-  if (switch1.release() || swithc2.release()){
+  if (swithc2.release()){
     actual.PEEP = actual.capturePEEP;
     actual.capturePEEP = 40.0;
   }
 
-  /* Back to main screen after timout */
+  /* Back to main screen after timout
+   * Status: tested, best
+   */
   if (millis()-timing.main_scr_timer >= timing.main_scr_timout) {
+    inSetting = false;
     if (isBreathing) {
       Screen = modeVCV ? scr_VCVDisplay_Actual : scr_BPAPDisplay_Actual;
     }else{
@@ -556,7 +560,6 @@ void loop() {
         /* Alarm off */
   			if (isAlarm){
   				//TODO: Trigger Alarm function
-  				//TODO: if select is pressed, show current setting
           if (selectBT.push()){
             Beep();
             Screen++;
@@ -608,8 +611,7 @@ bool pressureBEGIN(){
 
 bool pressureCMH2O(float &_pressure){
   bool _status = false;
-  if (pressureSensor){
-    const float atmospheric_pressure = 1013.25; //mbar
+    const float atmospheric_pressure = 1002; //mbar
     char status;
     double T,P;
     status = BMP180.startTemperature();
@@ -628,7 +630,6 @@ bool pressureCMH2O(float &_pressure){
         }
       }
     }
-  }
   
   return _status;
 }
@@ -744,8 +745,8 @@ void lcdDiplay(uint8_t _screen){
       case scr_VCVDisplay_Actual:
         //           -----------------------
         dispRow.R1 = "     VCV ACTUAL     ";
-        dispRow.R2 = " PIP  "+(String)actual.PIP+"cm    ";
-        dispRow.R3 = " PEEP "+(String)actual.PEEP+"cm    ";
+        dispRow.R2 = " PIP  "+(String)actual.PIP+"cm      ";
+        dispRow.R3 = " PEEP "+(String)actual.PEEP+"cm      ";
         dispRow.R4 = "   <SEE SETTING>    ";
         //           -----------------------
         break;
@@ -853,12 +854,41 @@ void lcdDiplay(uint8_t _screen){
   lcd.print(dispRow.R3);
   lcd.setCursor(0,3);
   lcd.print(dispRow.R4);
+
+void Alarm(uint8_t _num, long &_alarm_timer, bool _buzzer){
+  uint16_t _delay, _sound_num, _loop_timer;
+  switch (_num) {
+      case 1:
+        _delay = 200;
+        _sound_num = 1;
+        _loop_timer = 1000;
+        break;
+      case 2:
+        _delay = 200;
+        _sound_num = 2;
+        _loop_timer = 2000;
+        break;
+  }  
+
+  if (millis()-_alarm_timer >= _loop_timer) {
+    for (int i = 0; i < _sound_num; ++i){
+      delay(_delay);
+      digitalWrite(BUZZER_PIN, _buzzer);
+      digitalWrite(LED_PIN, 1);
+      delay(20);
+      digitalWrite(LED_PIN, 0);
+      digitalWrite(BUZZER_PIN, 0);
+    }
+    _alarm_timer = millis();
+  }
+  
 }
+
 
 void Beep(){
     timing.main_scr_timer = millis(); // Reset back to main screen timer
     digitalWrite(BUZZER_PIN, 1);
-    delay(5);
+    delay(10);
     digitalWrite(BUZZER_PIN, 0);
 }
 

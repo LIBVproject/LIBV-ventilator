@@ -139,7 +139,7 @@ enum States{
 
 struct STATE_TIMER{
   uint16_t inhale;
-  uint16_t plateau = 100;
+  uint16_t plateau = 100; //100 from MIT
   uint16_t exhale;
   uint16_t rest;
 };
