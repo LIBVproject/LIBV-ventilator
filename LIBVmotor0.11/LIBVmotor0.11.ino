@@ -29,12 +29,68 @@
 //VAL: EPPROM Address
 const int TV_ADD= 10, TI_ADD=11, IE_ADD=12;
 
+enum I2C_Func{
+  I2C_CMD_MOTOR,
+  I2C_DATA_SETTING
+};
+
+struct EEPROM_ADDR {
+  //Running Mode
+  const int MODE = 10;
+
+  //VCV Mode Data Address
+  const int VCV_IP = 11;
+  const int VCV_TV = 12;
+  const int VCV_RR = 13;
+  const int VCV_IE = 14;
+  const int VCV_PEEP = 15;
+
+  //BPAP Mode Data Address
+  const int BPAP_IP = 16;
+  const int BPAP_PEEP = 17;
+  const int BPAP_TP = 18;
+  const int BPAP_FST = 19;
+};
+
+/*************************/
+/*    CONSTANT NUMBER    */
+/*************************/
+
+//Constant to make the setting value in single-byte range (0-225)
+struct SINGLE_BYTE_CONST {
+  const float TV = 0.1;
+  const float IE = 10.0;
+  const float FST= 10.0;
+};
+
+/*************************/
+/*     SETTING VALUE     */
+/*************************/
+
+struct VCV_MODE {
+  int IP;
+  int TV;
+  int RR;
+  float IE;
+  int PEEP;
+};
+
+struct BPAP_MODE {
+  int IP;
+  int PEEP;
+  int TP;
+  float FST;
+};
+
+bool modeVCV=true;
+
 //P-IN: Hall switch
 #define HALL1_PIN 11
 #define HALL2_PIN 10
 
 //P-IN: Button
 #define BREATH_PIN 12
+#define LED_PIN 13
 
 //P-IN: Encoder
 #define chA 2   //Motor's encoder channel A
@@ -49,13 +105,13 @@ const int TV_ADD= 10, TI_ADD=11, IE_ADD=12;
 #define RPWM 6
 
 //VAL: Motor's spec
-#define mGear 51.0  //Motor's gear ratio
-#define mPpr 11.0   //Number of tick per one revolution capture by the encoder
+#define mGear 139.0  //Motor's gear ratio
+#define mPpr 7.0   //Number of tick per one revolution capture by the encoder
 #define mPulse 4.0  //Always 4, the encoder library return 4 in 1 tick from the encoder
 
 //VAL: PID Parameters
-#define Kp 140.0    //Proportional gain
-#define Ki 120.0    //Integral gain
+#define Kp 800.0    //Proportional gain
+#define Ki 10.0    //Integral gain
 #define ZERO 0.0    //Zero value
 
 //VAR: PID Variable 
@@ -66,41 +122,58 @@ float goSpeed=0.0, aSpeed=0.0;    //Target Speed, current Speed
 int cmd;                          //digital command from PID, the PWM value
 
 //Setting Variable
-#define RPB 0.62           //Number of round to rotate to one breath inhale
-int TV, TI, IE;
-float TV_MIN=0, TV_MAX=680;
+#define RPB 0.4           //Number of round to rotate to one breath inhale
 float TV2RPB=0.0;
 //bool pushIn=false;                  //define action of push IN or release the bag
-int timeIn, timeOut, timeRest;                //time to push in and push out in millisecond
-float speedIn, speedOut, speedMov;  //speed to push in and push out of the motor, in round per second (rps)
+double speedSet = 0.0;  //speed to push in and push out of the motor, in round per second (rps)
+
 unsigned long timer=0;              //to store the timer of running, millis(), millisecond
+bool isBreathing=false;     //Machine is running or not, true: help breathing & false: standby
+uint8_t state = 0;
+enum States{
+  INHALE,       //0
+  PLATEAU,      //1
+  EXHALE,       //2
+  REST          //3
+};
 
-//VAR: Ven stat
-int venStat=0;
-const int pushIN=0;
-const int pushOUT=1;
-const int pushRest=2;
+struct STATE_TIMER{
+  uint16_t inhale;
+  uint16_t plateau = 100;
+  uint16_t exhale;
+  uint16_t rest;
+};
 
-//VAR: Breath Button
-bool breathing = false;
-bool brth_hold_stat = false;
-const int brth_hold_time = 3000;
+struct STATE_SPEED{
+  double inhale;
+  double exhale;
+};
+
+
+EEPROM_ADDR EEPROMaddress;
+VCV_MODE VCVsetting;
+BPAP_MODE BPAPsetting;
+SINGLE_BYTE_CONST singleByteConst;
+STATE_TIMER timing;
+STATE_SPEED speed;
 
 simplePID PiD(Kp, Ki);      //Kp, Ki, use only PI, name it to "PiD"
-ramp Ramp(3.0, 2.0, 0.005); //Acceleration, Max Speed, Tolerance, name it to "Ramp"
+ramp Ramp(1.0, 2.0, 0.005); //Acceleration, Max Speed, Tolerance, name it to "Ramp"
 Encoder Enc(chA, chB);      //Encoder pins, name it to "Enc"
 BTS7960 motor(LPWM, RPWM);
 
-button BREATH_BUT(BREATH_PIN);
+button BREATH_BUT(BREATH_PIN, HIGH);
 //button HALL1(HALL1_PIN);
 //button HALL2(HALL2_PIN);
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
 
   //Initialize the digital input
-  BREATH_BUT.begin(true);
+  BREATH_BUT.init();
   pinMode(HALL1_PIN, INPUT);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, 0);
   //HALL1.begin(false);
   //HALL2.begin(false);
 
@@ -108,20 +181,31 @@ void setup() {
   Wire.begin(STATION_I2C_ADD);                // join i2c bus with address #8
   Wire.onReceive(receiveEvent);       // I2C receive data event
 
-  
   EEPROM_read(); //Get Setting from EEPROM
   BPM_Timing();  //Calc breath timing
-
   
   motor.init();  //Motor Setup
 
   //Initialize the Arms
+  timer = millis();
   while(true){
     motor.setPWM(-200);
-    if(digitalRead(HALL1_PIN)) break;;
+    if(!digitalRead(HALL1_PIN) || millis()-timer>=10000) break;
+  }
+  motor.setPWM(0);
+  delay(300);
+
+  motor.setPWM(100);
+  delay(500);
+
+  timer = millis();
+  while(true){
+    motor.setPWM(-80);
+    if(!digitalRead(HALL1_PIN) || millis()-timer>=5000) break;
   }
   motor.setPWM(0);
   delay(500);
+  digitalWrite(LED_PIN, 1);
 
   //Reset Encoder & Timer
   Enc.write(0);
@@ -134,45 +218,57 @@ void setup() {
 void loop() {
   //readSerial();  //Testing cmd from Serial
 
-  if(!breathing){
+  if(!isBreathing){
+  	speedSet = speed.exhale;
     goPos = ZERO; //go to HOME position
-    if(BREATH_BUT.push()) breathing=true; //Run breathing
   }else{
-    if(BREATH_BUT.holdTime() >= brth_hold_time) brth_hold_stat=true;
-    if(brth_hold_stat && BREATH_BUT.push()){
-      brth_hold_stat=false;
-      breathing=false;
-    }
-
-    switch(venStat){
-      case pushIN:
+    switch(state){
+      /* Inhale state*/
+      case INHALE:
         goPos = TV2RPB;
-        speedMov = speedIn;
+        speedSet = speed.inhale;
+        
+        /*
         if(millis()-timer>=timeIn || abs(goPos-aPos)<=0.04){
           timer = millis();
           venStat = pushOUT;
         }
-        break;
-      case pushOUT:
-        goPos = ZERO;
-        speedMov = speedOut;
-        if(millis()-timer>=timeOut){
-          timer = millis();
-          venStat = pushRest;
+		    */
+
+        if(abs(goPos-aPos)<=0.01) {
+        	timer = millis();
+        	state = PLATEAU; //reached desire position, move on
         }
         break;
-      case pushRest:
-        if(millis()-timer>=timeRest){
+
+      /* Meassuring Plateau Pressure */
+      case PLATEAU:
+        speedSet = ZERO;
+        if (millis()-timer >= timing.plateau){
           timer = millis();
-          venStat = pushIN;
+          state = EXHALE;
+        }
+        break;
+
+      /* Exhal state */
+      case EXHALE:
+        goPos = ZERO;
+        speedSet = speed.exhale;
+        if(millis()-timer >= timing.exhale){
+          timer = millis();
+          state = REST;
+        }
+        break;
+
+      /* Motor rest */
+      case REST:
+        if(millis()-timer>= timing.rest){
+          timer = millis();
+          state = INHALE;
         }
         break;
     }
-
   }
-
-  
-
   MotorControl();
 }
 
@@ -190,60 +286,169 @@ void MotorControl(){
     xEn=En;                             //Passing last encoder value
   }
   
-  if(abs(goPos-aPos)<1.1 && abs(goPos-aPos)>0.05) goSpeed = speedMov;
+  if(abs(goPos-aPos)<1.1 && abs(goPos-aPos)>0.05) goSpeed = speedSet;
   else goSpeed = Ramp.cmd(goPos, aPos, dt); 
   //goSpeed = Ramp.cmd(goPos, aPos, dt);
-  goSpeed *= 1.3;         //Mantain the 30% speed, PiD drop to correct the error (bad tuning) or do the better PiD tuning
+  goSpeed *= 1.4;         //Mantain the 40% speed, PiD drop to correct the error (bad tuning) or do the better PiD tuning
   cmd = PiD.cmd(goSpeed, aSpeed, dt);    //PiD generate digital control to motor
-  if(brth_hold_stat) cmd = 0;
+  if(abs(cmd)<=10) cmd=0;
   motor.setPWM(cmd);
 }
 
 void readSerial() {
   if(Serial.available()) {
     String inString = Serial.readString();
-    goPos = inString.toFloat();
-    Serial.println("dspeed: "+(String)goPos);
+    TV2RPB = inString.toFloat();
+    Serial.println("Target: "+(String)TV2RPB);
   }
-}
-
-//Alarm sound and LED, silent button to silence the alarm for period of time
-void Alarm(bool _stat, int type){
-  //TODO: define alarm type
-  //TODO: trigger the alarm with _stat
-  //TODO: silent button
 }
 
 //Calculate the Breath timing from Setting
 void BPM_Timing(){
-  timeIn = TI;
-  timeOut = (TI*IE*0.5)/2.0;
-  timeRest = timeOut; 
-  TV2RPB = (TV/TV_MAX)*RPB;
-  speedIn = TV2RPB*1000.0/(float)timeIn;
-  speedOut = -(TV2RPB*1000.0/(float)timeOut);
+  if (modeVCV){
+    timing.inhale = round(60000.0 / (VCVsetting.RR*(1+VCVsetting.IE)));
+    timing.exhale = (timing.inhale*VCVsetting.IE)/2.0; //exhale time is haft of it and the rest is motor's resting 
+    timing.rest = timing.exhale - timing.plateau; 
+
+    TV2RPB = min(camPosition(VCVsetting.TV), RPB);
+
+    speed.inhale = TV2RPB*1000.0/(float)timing.inhale;
+    speed.exhale = -(TV2RPB*1000.0/(float)timing.exhale);
+  }
+
+}
+
+float camPosition(int _tv){
+	switch (_tv) {
+      case 100:
+        return 0.165;//
+        break;
+        
+      case 150:
+        return 0.18;//
+        break;
+        
+      case 200:
+        return 0.195;//
+        break;
+        
+	    case 250:
+	      return 0.205;//
+	      break;
+
+	    case 300:
+	      return 0.223;//
+	    break;
+
+	    case 350:
+	      return 0.231;//
+	      break;
+
+	    case 400:
+	      return 0.245;//
+	      break;
+
+	    case 450:
+	      return 0.253;//
+	      break;
+
+	    case 500:
+	      return 0.27;//
+	      break;
+
+	    case 550:
+	      return 0.28;//
+	      break;
+
+	    case 600:
+	      return 0.29;//
+	      break;
+
+	    case 650:
+	      return 0.30;//
+	      break;
+
+	    case 700:
+	      return 0.31;//
+	      break;
+
+	    case 750:
+	      return 0.32;//
+	      break;
+
+	    case 800:
+	      return 0.335;//0.335
+	      break;
+
+	    default:
+	      return 0.23;
+	}
+
 }
 
 //I2C Receive Data and update to EEPROM
 void receiveEvent(int howMany) {
+  uint8_t _func = Wire.read();
+  switch (_func) {
+      case I2C_CMD_MOTOR:    //Read as motor command
+        isBreathing = (bool)Wire.read();
+        break;
 
+      case I2C_DATA_SETTING: // Read as setting data
+        modeVCV = (bool)Wire.read();
+        VCVsetting.IP = Wire.read();
+        VCVsetting.TV = Wire.read()/singleByteConst.TV;
+        VCVsetting.RR = Wire.read();
+        VCVsetting.IE = Wire.read()/singleByteConst.IE;
+        VCVsetting.PEEP = Wire.read();
+        BPAPsetting.IP = Wire.read();
+        BPAPsetting.PEEP = Wire.read();
+        BPAPsetting.TP = Wire.read();
+        BPAPsetting.FST = Wire.read()/singleByteConst.FST;
+        break;
+  }
   //Read each byte from master
-  TV = Wire.read()*10;
-  TI = Wire.read()*100;
-  IE = Wire.read();
+  
+
+  Serial.println("-------------------");
+  Serial.print("Mode: ");Serial.println(modeVCV);
+  Serial.print("IP: ");Serial.println(VCVsetting.IP);
+  Serial.print("TV: ");Serial.println(VCVsetting.TV);
+  Serial.print("RR: ");Serial.println(VCVsetting.RR);
+  Serial.print("IE: ");Serial.println(VCVsetting.IE);
+  Serial.print("PEEP: ");Serial.println(VCVsetting.PEEP);
+  Serial.println("-------------------");
 
   EEPROM_update();
   BPM_Timing();
 }
 
 void EEPROM_update(){
-  EEPROM.update(TV_ADD, TV/10);
-  EEPROM.update(TI_ADD, TI/100);
-  EEPROM.update(IE_ADD, IE);
+  EEPROM.update(EEPROMaddress.MODE, (int)modeVCV);
+
+  EEPROM.update(EEPROMaddress.VCV_IP, VCVsetting.IP);
+  EEPROM.update(EEPROMaddress.VCV_TV, int(VCVsetting.TV*singleByteConst.TV));
+  EEPROM.update(EEPROMaddress.VCV_RR, VCVsetting.RR);
+  EEPROM.update(EEPROMaddress.VCV_IE, int(VCVsetting.IE*singleByteConst.IE));
+  EEPROM.update(EEPROMaddress.VCV_PEEP, VCVsetting.PEEP);
+
+  EEPROM.update(EEPROMaddress.BPAP_IP, BPAPsetting.IP);
+  EEPROM.update(EEPROMaddress.BPAP_PEEP, BPAPsetting.PEEP);
+  EEPROM.update(EEPROMaddress.BPAP_TP, BPAPsetting.TP);
+  EEPROM.update(EEPROMaddress.BPAP_FST, int(BPAPsetting.FST*singleByteConst.FST));
 }
 
 void EEPROM_read(){
-  TV = EEPROM.read(TV_ADD)*10;
-  TI = EEPROM.read(TI_ADD)*100;
-  IE = EEPROM.read(IE_ADD);
+  modeVCV = (bool)EEPROM.read(EEPROMaddress.MODE);
+
+  VCVsetting.IP   = EEPROM.read(EEPROMaddress.VCV_IP);
+  VCVsetting.TV   = EEPROM.read(EEPROMaddress.VCV_TV)/singleByteConst.TV;
+  VCVsetting.RR  = EEPROM.read(EEPROMaddress.VCV_RR);
+  VCVsetting.IE   = EEPROM.read(EEPROMaddress.VCV_IE)/singleByteConst.IE;
+  VCVsetting.PEEP = EEPROM.read(EEPROMaddress.VCV_PEEP);
+  
+  BPAPsetting.IP   = EEPROM.read(EEPROMaddress.BPAP_IP);
+  BPAPsetting.PEEP = EEPROM.read(EEPROMaddress.BPAP_PEEP);
+  BPAPsetting.TP   = EEPROM.read(EEPROMaddress.BPAP_TP);
+  BPAPsetting.FST  = EEPROM.read(EEPROMaddress.BPAP_FST)/singleByteConst.FST;
 }
