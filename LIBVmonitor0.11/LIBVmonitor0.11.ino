@@ -46,7 +46,8 @@
 
 enum I2C_Func{
   I2C_CMD_MOTOR,
-  I2C_DATA_SETTING
+  I2C_DATA_SETTING,
+  I2C_DATA_PRESSURE
 };
 
 /*************************/
@@ -204,6 +205,7 @@ struct ACTUAL_DISPLAY{
 
 enum  screenID {
   scr_PowerON,
+  scr_PressureFail,
   scr_Setting_VCV,
   scr_Setting_BPAP,
   scr_VCVSetting_IP,
@@ -213,7 +215,7 @@ enum  screenID {
   scr_VCVSetting_PEEP,
   scr_VCVDisplay_Actual,
   scr_VCVDisplay_Setting,
-  scr_VCVAlarm,
+  scr_VCVAlarm_IP,
   scr_BPAPSetting_IP,
   scr_BPAPSetting_PEEP,
   scr_BPAPSetting_TP,
@@ -226,13 +228,15 @@ enum  screenID {
 struct TIMING{
   const long main_scr_timout = 20000;        // back to main screen timout, after no change for 30s
   long main_scr_timer = 0;                   // Reset at Beep function
+  const long pressure_send_time = 50;
+  long pressure_send_timer = 0;
 } timing;
 
 struct ALARMING{
   const long silent_timout = 600000;  // silent buzzer for 10mn after silent button is pusheed
   long off_timer = 0;                 // reset alarm loop
   long silent_timer = 0;              // reset silent buzzer
-  bool buzzer_is_silent = false;      // buzzer sound state
+  bool buzzer_is_silenced = false;      // buzzer sound state
 } alarming;
 
 uint8_t Screen=scr_PowerON;           //Screen display ID, start with Power On screen
@@ -306,14 +310,7 @@ void setup() {
   startUpScreen();
 
   /* Pressure sensor */
-  pressureSensor = pressureBEGIN();
-  if (!pressureSensor){
-    //pressure sensor fail, Alarm
-    while(1){
-      Beep(3, 400);
-      if (cancelBT.push()) break;  //Skip pressure sensor
-    }
-  }
+  pressureBEGIN();
 }
 
 void loop() {
@@ -339,11 +336,19 @@ void loop() {
    * - Capture PIP and PEEP for actual displays
    */
   pressureSensor = pressureCMH2O(actual.pressureRead); //pressure in cmH2O
-  Serial.println(actual.pressureRead);
+  //Serial.println(actual.pressureRead);
+
+  /* Send pressure data to slave
+   * send every pressure_send_timer
+   */
+  if (millis()-timing.pressure_send_timer>=timing.pressure_send_time) {
+    timing.pressure_send_timer = millis();
+    wireData(I2C_ADDR_MOTOR, I2C_DATA_PRESSURE);
+  }
+  
   //record PIP and PEEP pressure
   if (actual.pressureRead>actual.capturePIP) actual.capturePIP = actual.pressureRead;
   if (actual.pressureRead<actual.capturePEEP) actual.capturePEEP = actual.pressureRead;
-
   //Capture PIP when Arms arrived at Home position
   if (swithc2.push()){
     actual.PIP = actual.capturePIP;
@@ -568,12 +573,12 @@ void loop() {
            */
           if (silentBT.push()){
             silentBT.resetHold();
-            alarming.buzzer_is_silent = true;
+            alarming.buzzer_is_silenced = true;
             alarming.silent_timer = millis();
           }
           //Reset the buzzer alarm state to not silent
-          if (alarming.buzzer_is_silent){
-            alarming.buzzer_is_silent = (millis()-alarming.silent_timer<=alarming.silent_timout);
+          if (alarming.buzzer_is_silenced){
+            alarming.buzzer_is_silenced = (millis()-alarming.silent_timer<=alarming.silent_timout);
           }
 
           /* Alarm trigger
@@ -581,7 +586,7 @@ void loop() {
            * recording timer for alarm loop sound
            * buzzer state for silent the buzzer but keep the LED flash
            */
-          Alarm(2, alarming.off_timer, alarming.buzzer_is_silent);
+          Alarm(2, alarming.off_timer, alarming.buzzer_is_silenced);
           
           /* Switch Screen (Select button)
            * Can switch between, Alarm Display, Setting Display & Actual Display
@@ -589,7 +594,7 @@ void loop() {
           if (selectBT.push()){
             Beep();
             Screen++;
-            if (Screen > scr_VCVAlarm) Screen = scr_VCVDisplay_Actual;
+            if (Screen > scr_VCVAlarm_IP) Screen = scr_VCVDisplay_Actual;
           }
 
   			}else{
@@ -640,13 +645,17 @@ void loop() {
   lcdDiplay(Screen);
 }
 
-bool pressureBEGIN(){
-  return BMP180.begin();  //return sensor initialize status
+void pressureBEGIN(){
+  while(!BMP180.begin()){
+    lcdDiplay(scr_PressureFail);  //Display Alarm sensor fail.
+    Beep(2, 200);
+    if (cancelBT.push()) break;
+  }
 }
 
 bool pressureCMH2O(float &_pressure){
   bool _status = false;
-    const float atmospheric_pressure = 1002; //mbar
+    const float atmospheric_pressure = 1013; // 1013 mbar
     char status;
     double T,P;
     status = BMP180.startTemperature();
@@ -711,6 +720,15 @@ void lcdDiplay(uint8_t _screen){
         dispRow.R2 = " VENTILATOR PROJECT ";
         dispRow.R3 = "                    ";
         dispRow.R4 = "   www.bvmvent.org  ";
+        //           -----------------------
+        break;
+
+      case scr_PressureFail:
+        //           -----------------------
+        dispRow.R1 = "   >>> ALARM <<<    ";
+        dispRow.R2 = "                    ";
+        dispRow.R3 = "Pressure Sensor Fail";
+        dispRow.R4 = "  (Check & Reboot)  ";
         //           -----------------------
         break;
 
@@ -795,7 +813,7 @@ void lcdDiplay(uint8_t _screen){
         //           -----------------------
         break;
 
-      case scr_VCVAlarm: 
+      case scr_VCVAlarm_IP:
         //           -----------------------
         dispRow.R1 = "   >>> ALARM <<<    ";
         dispRow.R2 = "                    ";
@@ -1020,6 +1038,10 @@ void wireData(uint8_t _addr, I2C_Func _func){
         Wire.write(BPAPsetting.PEEP); 
         Wire.write(BPAPsetting.TP); 
         Wire.write(int(BPAPsetting.FST*singleByteConst.FST));
+        break;
+
+      case I2C_DATA_PRESSURE: //Send pressure data
+        Wire.write(int(actual.pressureRead));
         break;
   }
 

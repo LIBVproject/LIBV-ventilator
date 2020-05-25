@@ -24,6 +24,8 @@
 #include <BTS7960.h>
 #include <button.h>
 
+#define DEBUG false
+
 #define STATION_I2C_ADD 8 //I2C slave station Address
 
 //VAL: EPPROM Address
@@ -31,7 +33,8 @@ const int TV_ADD= 10, TI_ADD=11, IE_ADD=12;
 
 enum I2C_Func{
   I2C_CMD_MOTOR,
-  I2C_DATA_SETTING
+  I2C_DATA_SETTING,
+  I2C_DATA_PRESSURE
 };
 
 struct EEPROM_ADDR {
@@ -178,8 +181,9 @@ void setup() {
   //HALL2.begin(false);
 
   //I2C Setup
-  Wire.begin(STATION_I2C_ADD);                // join i2c bus with address #8
+  Wire.begin(STATION_I2C_ADD);        // join i2c bus with address #8
   Wire.onReceive(receiveEvent);       // I2C receive data event
+  Wire.onRequest(requestEvent);       // register response event
 
   EEPROM_read(); //Get Setting from EEPROM
   BPM_Timing();  //Calc breath timing
@@ -388,6 +392,7 @@ float camPosition(int _tv){
 
 //I2C Receive Data and update to EEPROM
 void receiveEvent(int howMany) {
+  int pres = 0;
   uint8_t _func = Wire.read();
   switch (_func) {
       case I2C_CMD_MOTOR:    //Read as motor command
@@ -406,21 +411,32 @@ void receiveEvent(int howMany) {
         BPAPsetting.TP = Wire.read();
         BPAPsetting.FST = Wire.read()/singleByteConst.FST;
         break;
+
+      case I2C_DATA_PRESSURE:
+        pres = Wire.read();
+        break;
   }
   //Read each byte from master
+  //Serial.println(pres);
+  if (DEBUG) {
+    Serial.println("-------------------");
+    Serial.print("Mode: ");Serial.println(modeVCV);
+    Serial.print("IP: ");Serial.println(VCVsetting.IP);
+    Serial.print("TV: ");Serial.println(VCVsetting.TV);
+    Serial.print("RR: ");Serial.println(VCVsetting.RR);
+    Serial.print("IE: ");Serial.println(VCVsetting.IE);
+    Serial.print("PEEP: ");Serial.println(VCVsetting.PEEP);
+    Serial.println("-------------------");
+  }
   
-
-  Serial.println("-------------------");
-  Serial.print("Mode: ");Serial.println(modeVCV);
-  Serial.print("IP: ");Serial.println(VCVsetting.IP);
-  Serial.print("TV: ");Serial.println(VCVsetting.TV);
-  Serial.print("RR: ");Serial.println(VCVsetting.RR);
-  Serial.print("IE: ");Serial.println(VCVsetting.IE);
-  Serial.print("PEEP: ");Serial.println(VCVsetting.PEEP);
-  Serial.println("-------------------");
 
   EEPROM_update();
   BPM_Timing();
+}
+
+//I2C response to master request
+void requestEvent(){
+  Wire.write('c');
 }
 
 void EEPROM_update(){
@@ -443,7 +459,7 @@ void EEPROM_read(){
 
   VCVsetting.IP   = EEPROM.read(EEPROMaddress.VCV_IP);
   VCVsetting.TV   = EEPROM.read(EEPROMaddress.VCV_TV)/singleByteConst.TV;
-  VCVsetting.RR  = EEPROM.read(EEPROMaddress.VCV_RR);
+  VCVsetting.RR   = EEPROM.read(EEPROMaddress.VCV_RR);
   VCVsetting.IE   = EEPROM.read(EEPROMaddress.VCV_IE)/singleByteConst.IE;
   VCVsetting.PEEP = EEPROM.read(EEPROMaddress.VCV_PEEP);
   
