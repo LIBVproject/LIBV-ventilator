@@ -36,6 +36,8 @@
 #include <SparkFun_MS5803_I2C.h>
 #include <SFE_BMP180.h>
 
+#define DEBUG false
+
 /*------------------------------- PARAMETERS ------------------------------*/
 
 /*************************/
@@ -47,7 +49,10 @@
 enum I2C_Func{
   I2C_CMD_MOTOR,
   I2C_DATA_SETTING,
-  I2C_DATA_PRESSURE
+  I2C_DATA_PRESSURE,
+  I2C_REQUEST_PLATEAU,
+  I2C_REQUEST_POSITION,
+  I2C_REQUEST_PLATEAU_AND_POSITION
 };
 
 /*************************/
@@ -197,10 +202,12 @@ struct ROTARY_VALUE {
 
 struct ACTUAL_DISPLAY{
   float pressureRead;
-  float capturePIP;
+  float captureIP;
   float capturePEEP;
-  float PIP;
+  float IP;
   float PEEP;
+  uint8_t Plateau;
+  uint8_t Position;
 };
 
 enum  screenID {
@@ -225,6 +232,12 @@ enum  screenID {
   scr_BPAPlarm
 };
 
+enum Alarm_Type {
+  sound_pressure_sensor,
+  sound_pressure_ip,
+  sound_pressure_peep
+};
+
 struct TIMING{
   const long main_scr_timout = 20000;        // back to main screen timout, after no change for 30s
   long main_scr_timer = 0;                   // Reset at Beep function
@@ -233,10 +246,16 @@ struct TIMING{
 } timing;
 
 struct ALARMING{
-  const long silent_timout = 600000;  // silent buzzer for 10mn after silent button is pusheed
-  long off_timer = 0;                 // reset alarm loop
-  long silent_timer = 0;              // reset silent buzzer
-  bool buzzer_is_silenced = false;      // buzzer sound state
+  const long silent_timout = 600000;          // silent buzzer for 10mn after silent button is pusheed
+  const float pressure_ip_offset = 5.0;       // tolorance of IP alarm (cm)
+  const float pressure_peep_offset = 5.0;     // tolorance of PEEP alarm (cm)
+  long off_timer = 0;                         // reset alarm loop
+  long silent_timer = 0;                      // reset silent buzzer
+  bool buzzer_is_silenced = false;            // buzzer sound state
+  bool pressure_sensor_fail = false;          // Pressure sensor status
+  bool pressure_ip_fail = false;              // IP pressure out of range
+  bool pressure_peep_fail = false;            // PEEP pressure out of range
+  bool i2c_communication_fail = false;        // I2C communication check fail
 } alarming;
 
 uint8_t Screen=scr_PowerON;           //Screen display ID, start with Power On screen
@@ -252,7 +271,7 @@ bool isAlarm=false;
 bool isBreathing=false;     //Machine is running or not, true: help breathing & false: standby
 
 
-bool pressureSensor = false;
+
 
 /*-------------------------- STRUCTURE VARIABLES ----------------------------*/
 
@@ -305,7 +324,7 @@ void setup() {
 
   EEPROM_read();
   SETTING2DISPLAY();
-  wireData(I2C_ADDR_MOTOR, I2C_DATA_SETTING);
+  alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_DATA_SETTING);
 
   startUpScreen();
 
@@ -322,43 +341,13 @@ void loop() {
     breatheBT.resetHold();
     Beep(3, 100);
     isBreathing = true; // Run the motor
-    wireData(I2C_ADDR_MOTOR, I2C_CMD_MOTOR);
+    alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_CMD_MOTOR);
     Screen = modeVCV? scr_VCVDisplay_Actual:scr_BPAPDisplay_Actual;
   }else if (isBreathing && breatheBT.onHold()>=2000){
     breatheBT.resetHold();
     Beep(3, 100);
     isBreathing = false; // Run the motor
-    wireData(I2C_ADDR_MOTOR, I2C_CMD_MOTOR);
-  }
-
-  /* Read Pressure
-   * - Check pressure sensor status for Alarm
-   * - Capture PIP and PEEP for actual displays
-   */
-  pressureSensor = pressureCMH2O(actual.pressureRead); //pressure in cmH2O
-  //Serial.println(actual.pressureRead);
-
-  /* Send pressure data to slave
-   * send every pressure_send_timer
-   */
-  if (millis()-timing.pressure_send_timer>=timing.pressure_send_time) {
-    timing.pressure_send_timer = millis();
-    wireData(I2C_ADDR_MOTOR, I2C_DATA_PRESSURE);
-  }
-  
-  //record PIP and PEEP pressure
-  if (actual.pressureRead>actual.capturePIP) actual.capturePIP = actual.pressureRead;
-  if (actual.pressureRead<actual.capturePEEP) actual.capturePEEP = actual.pressureRead;
-  //Capture PIP when Arms arrived at Home position
-  if (swithc2.push()){
-    actual.PIP = actual.capturePIP;
-    actual.capturePIP = 0.0;
-  }
-
-  //Capture PEEP when Arms left home position
-  if (swithc2.release()){
-    actual.PEEP = actual.capturePEEP;
-    actual.capturePEEP = 40.0;
+    alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_CMD_MOTOR);
   }
 
   /* Back to main screen after timout
@@ -373,10 +362,50 @@ void loop() {
     }
   }
 
-  /*  Control panel action
-   *
-   */
+  /* Read Pressure
+  * - Check pressure sensor status for Alarm
+  * - Capture PIP and PEEP for actual displays
+  */
+  alarming.pressure_sensor_fail = !pressureCMH2O(actual.pressureRead); //pressure in cmH2O
+  //Serial.println(actual.pressureRead);
 
+  // Pressure operating only when the sensor not fail
+  if (!alarming.pressure_sensor_fail){
+    /* Send pressure data to slave
+     * send every pressure_send_timer
+     */
+    if (millis()-timing.pressure_send_timer>=timing.pressure_send_time) {
+      timing.pressure_send_timer = millis();
+      alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_DATA_PRESSURE);
+    }
+  
+    //record PIP and PEEP pressure
+    if (actual.pressureRead>actual.captureIP) actual.captureIP = actual.pressureRead;
+    if (actual.pressureRead<actual.capturePEEP) actual.capturePEEP = actual.pressureRead;
+    //Capture PIP when Arms arrived at Home position
+    if (swithc2.push()){
+      actual.IP = actual.captureIP;
+      actual.captureIP = 0.0; // reset IP value
+      alarming.i2c_communication_fail=!wireRequest(I2C_ADDR_MOTOR);
+    }
+
+    //Capture PEEP when Arms left home position
+    if (swithc2.release()){
+      actual.PEEP = actual.capturePEEP;
+      actual.capturePEEP = 40.0;
+    }
+  }else{
+    /* Fail to read pressure
+     * Top-priority alarm
+     */
+    if (DEBUG) Serial.println("Pressure sensor fail!");
+    Alarm(sound_pressure_sensor, alarming.off_timer, alarming.buzzer_is_silenced);
+    Screen = scr_PressureFail;
+  }
+
+  /*  Control panel action
+   *  
+   */
   rotary.Value = rotaryEnc.read()/2;
 
   //Setting Display
@@ -551,7 +580,7 @@ void loop() {
   		if (setBT.onHold()>=1500){
         setBT.resetHold();
   			Beep(2,200);
-  			wireData(I2C_ADDR_MOTOR, I2C_DATA_SETTING);
+  			alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_DATA_SETTING);
         Screen = modeVCV? scr_VCVDisplay_Actual:scr_BPAPDisplay_Actual;
   			inSetting = false; //Jump to display current setting
   		}
@@ -559,19 +588,28 @@ void loop() {
   	
   }else{
   	rotary.lastValue = rotary.Value; //Reset rotary change accidently
+
   	if (modeVCV){
   		if (isBreathing){
+        // Alarm trigger
+        if (!alarming.pressure_sensor_fail){
+          alarming.pressure_ip_fail = outOfRange(actual.IP, VCVsetting.IP, alarming.pressure_ip_offset);
+          alarming.pressure_peep_fail = outOfRange(actual.PEEP, VCVsetting.PEEP, alarming.pressure_peep_offset);
+          isAlarm = (alarming.pressure_ip_fail || alarming.pressure_peep_fail);
+        }
 
-        //TODO: check the alarm
+        //isAlarm = (alarming.pressure_sensor_fail || alarming.pressure_ip_fail || alarming.pressure_peep_fail);
 
         /* Alarm off */
   			if (isAlarm){
+          //TODO: identify the alarm type and alarm Screen
+
           /* Silent button event
            * push to silent the buzzer for silinet_timout
            * trigger buzzer silent state to true (silent is true)
            * retrigger buzzer state comparing by silent_timer and millis
            */
-          if (silentBT.push()){
+          if (silentBT.press()){
             silentBT.resetHold();
             alarming.buzzer_is_silenced = true;
             alarming.silent_timer = millis();
@@ -596,7 +634,7 @@ void loop() {
             Screen++;
             if (Screen > scr_VCVAlarm_IP) Screen = scr_VCVDisplay_Actual;
           }
-
+          //TODO: check if the Screen is not in Alarm(screen) range, reset timer and get back to alarm Screen
   			}else{
 
           // Reset Alarm timer
@@ -798,9 +836,9 @@ void lcdDiplay(uint8_t _screen){
       case scr_VCVDisplay_Actual:
         //           -----------------------
         dispRow.R1 = "     VCV ACTUAL     ";
-        dispRow.R2 = " PIP  "+(String)actual.PIP+"cm      ";
-        dispRow.R3 = " PEEP "+(String)actual.PEEP+"cm      ";
-        dispRow.R4 = "   <SEE SETTING>    ";
+        dispRow.R2 = " IP      "+(String)actual.IP+"cm   ";
+        dispRow.R3 = " Plateau "+(String)actual.Plateau+"cm      ";
+        dispRow.R4 = " PEEP    "+(String)actual.PEEP+"cm    ";
         //           -----------------------
         break;
 
@@ -870,7 +908,7 @@ void lcdDiplay(uint8_t _screen){
         //           -----------------------
         dispRow.R1 = "    BPAP ACTUAL     ";
         dispRow.R2 = " PA 40cm            ";
-        dispRow.R3 = " TV 200ml   PIP 40cm";
+        dispRow.R3 = " TV 200ml    IP 40cm";
         dispRow.R4 = "   <SEE SETTING>    ";
         //           -----------------------
         break;
@@ -889,7 +927,7 @@ void lcdDiplay(uint8_t _screen){
         dispRow.R1 = " >> BPAP  FIALED << ";
         dispRow.R2 = " >> VCV FAILSAFE << ";
         dispRow.R3 = " ACTUAL:  PA  40cm  ";
-        dispRow.R4 = " TV 200ml PIP 400ml ";
+        dispRow.R4 = " TV 200ml IP  40cm  ";
         //           -----------------------
         break;
 
@@ -1018,7 +1056,7 @@ void EEPROM_read(){
 }
 
 
-void wireData(uint8_t _addr, I2C_Func _func){
+bool wireData(uint8_t _addr, I2C_Func _func){
   Wire.beginTransmission(_addr);
   Wire.write(_func);
 
@@ -1044,12 +1082,30 @@ void wireData(uint8_t _addr, I2C_Func _func){
         Wire.write(int(actual.pressureRead));
         break;
   }
+  uint8_t _slave_status = Wire.endTransmission();
+  return _slave_status == 0; // Transmission success
+}
 
-  Wire.endTransmission();
+bool wireRequest(uint8_t _addr){
+  bool _bus_status = false;
+  if (Wire.requestFrom(_addr, 2) == 2) {  // correct slave response
+    while(Wire.available()){
+      actual.Plateau = Wire.read();
+      actual.Position = Wire.read();
+    }
+    if (DEBUG) Serial.println("[I2C] Collecting data from slave.");
+    _bus_status = true;
+  }
+    
+  return _bus_status;
 }
 
 bool inRange(int _val, int _min, int _max){
 	return (_val >= _min) && (_val <= _max);
+}
+
+bool outOfRange(float _input, float _set, float _offset){
+  return abs(_set - _input) >= _offset;
 }
 
 //birth to 6 weeks: 30–40 breaths per minute

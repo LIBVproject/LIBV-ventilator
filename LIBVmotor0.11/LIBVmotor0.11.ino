@@ -34,7 +34,10 @@ const int TV_ADD= 10, TI_ADD=11, IE_ADD=12;
 enum I2C_Func{
   I2C_CMD_MOTOR,
   I2C_DATA_SETTING,
-  I2C_DATA_PRESSURE
+  I2C_DATA_PRESSURE,
+  I2C_REQUEST_PLATEAU,
+  I2C_REQUEST_POSITION,
+  I2C_REQUEST_PLATEAU_AND_POSITION
 };
 
 struct EEPROM_ADDR {
@@ -84,6 +87,8 @@ struct BPAP_MODE {
   int TP;
   float FST;
 };
+
+
 
 bool modeVCV=true;
 
@@ -152,12 +157,21 @@ struct STATE_SPEED{
   double exhale;
 };
 
+struct ACTUAL_RECORD{
+  uint8_t Pressure;
+  uint8_t Plateau;      // Platual pressure
+  uint8_t Position;
+};
+
+uint8_t i2c_request_func = I2C_REQUEST_PLATEAU;
+
 
 EEPROM_ADDR EEPROMaddress;
 VCV_MODE VCVsetting;
 BPAP_MODE BPAPsetting;
 SINGLE_BYTE_CONST singleByteConst;
 STATE_TIMER timing;
+ACTUAL_RECORD actual;
 STATE_SPEED speed;
 
 simplePID PiD(Kp, Ki);      //Kp, Ki, use only PI, name it to "PiD"
@@ -248,6 +262,8 @@ void loop() {
       /* Meassuring Plateau Pressure */
       case PLATEAU:
         speedSet = ZERO;
+        actual.Plateau = actual.Pressure;
+        Serial.println(actual.Plateau);
         if (millis()-timer >= timing.plateau){
           timer = millis();
           state = EXHALE;
@@ -394,6 +410,7 @@ float camPosition(int _tv){
 void receiveEvent(int howMany) {
   int pres = 0;
   uint8_t _func = Wire.read();
+  if (DEBUG) Serial.println("I2C Func: "+(String)_func);
   switch (_func) {
       case I2C_CMD_MOTOR:    //Read as motor command
         isBreathing = (bool)Wire.read();
@@ -413,11 +430,15 @@ void receiveEvent(int howMany) {
         break;
 
       case I2C_DATA_PRESSURE:
-        pres = Wire.read();
+        actual.Pressure = Wire.read();
+        break;
+
+      // Request function
+      default:
+        i2c_request_func = Wire.read();
         break;
   }
   //Read each byte from master
-  //Serial.println(pres);
   if (DEBUG) {
     Serial.println("-------------------");
     Serial.print("Mode: ");Serial.println(modeVCV);
@@ -436,7 +457,8 @@ void receiveEvent(int howMany) {
 
 //I2C response to master request
 void requestEvent(){
-  Wire.write('c');
+  Wire.write(actual.Plateau);
+  Wire.write(actual.Position);
 }
 
 void EEPROM_update(){
