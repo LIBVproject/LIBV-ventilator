@@ -263,7 +263,6 @@ void loop() {
       case PLATEAU:
         speedSet = ZERO;
         actual.Plateau = actual.Pressure;
-        Serial.println(actual.Plateau);
         if (millis()-timer >= timing.plateau){
           timer = millis();
           state = EXHALE;
@@ -408,7 +407,6 @@ float camPosition(int _tv){
 
 //I2C Receive Data and update to EEPROM
 void receiveEvent(int howMany) {
-  int pres = 0;
   uint8_t _func = Wire.read();
   if (DEBUG) Serial.println("I2C Func: "+(String)_func);
   switch (_func) {

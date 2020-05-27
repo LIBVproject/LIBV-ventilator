@@ -24,7 +24,7 @@
  * - PIP: Peak Inspiratory Pressure 
  * - TP: Trigger Pressure                               cm.H20
  * - FST: Failsafe Time ratio
- * - RR: Resporatory Rate 								Breathe Per minutes
+ * - RR: Resporatory Rate                 Breathe Per minutes
  *
  */
 
@@ -201,11 +201,11 @@ struct ROTARY_VALUE {
 /*************************/
 
 struct ACTUAL_DISPLAY{
-  float pressureRead;
-  float captureIP;
-  float capturePEEP;
-  float IP;
-  float PEEP;
+  int8_t pressureRead;
+  int8_t captureIP;
+  int8_t capturePEEP;
+  int8_t IP;
+  int8_t PEEP;
   uint8_t Plateau;
   uint8_t Position;
 };
@@ -222,6 +222,7 @@ enum  screenID {
   scr_VCVSetting_PEEP,
   scr_VCVDisplay_Actual,
   scr_VCVDisplay_Setting,
+  scr_VCVAlarm_PEEP,
   scr_VCVAlarm_IP,
   scr_BPAPSetting_IP,
   scr_BPAPSetting_PEEP,
@@ -233,9 +234,8 @@ enum  screenID {
 };
 
 enum Alarm_Type {
-  sound_pressure_sensor,
-  sound_pressure_ip,
-  sound_pressure_peep
+  primary_alarm,    //0
+  secondary_alarm,  //1
 };
 
 struct TIMING{
@@ -262,9 +262,9 @@ uint8_t Screen=scr_PowerON;           //Screen display ID, start with Power On s
 
 bool modeVCV=true;
 bool inSetting=false;       // true: display setting adjusment, false: save setting and display current setting.
-bool disp_modeSet=true; 	  //Screen display when start setup mode, true: start with chosing VCV or BPAP, false: go to element setup
-bool disp_modeVCV=true; 	  //Screen display mode for setup the elements, true: VCV and false: BPAP
-bool disp_select=false;		  //Select the element to adjust.
+bool disp_modeSet=true;     //Screen display when start setup mode, true: start with chosing VCV or BPAP, false: go to element setup
+bool disp_modeVCV=true;     //Screen display mode for setup the elements, true: VCV and false: BPAP
+bool disp_select=false;     //Select the element to adjust.
 bool disp_change=false;     //rotary change status.
 bool isAlarm=false;
 
@@ -346,6 +346,7 @@ void loop() {
   }else if (isBreathing && breatheBT.onHold()>=2000){
     breatheBT.resetHold();
     Beep(3, 100);
+    isAlarm = false;     // Reset alarm for new operation
     isBreathing = false; // Run the motor
     alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_CMD_MOTOR);
   }
@@ -399,7 +400,7 @@ void loop() {
      * Top-priority alarm
      */
     if (DEBUG) Serial.println("Pressure sensor fail!");
-    Alarm(sound_pressure_sensor, alarming.off_timer, alarming.buzzer_is_silenced);
+    Alarm(primary_alarm, alarming.off_timer, alarming.buzzer_is_silenced);
     Screen = scr_PressureFail;
   }
 
@@ -410,156 +411,156 @@ void loop() {
 
   //Setting Display
   if(inSetting){
-  	if(disp_modeSet){	//Select mode for setting
-  		Screen = disp_modeVCV ? scr_Setting_VCV : scr_Setting_BPAP; //Set display Screen
-  		if (selectBT.push()){	//Switch selected mode
-  			Beep();
-  			disp_modeVCV = !disp_modeVCV;	//Switching select mode between VCV & BPAP
-  		}
-  		
-  		if(setBT.push()){ //Chose mode, move to elements			
-  			Beep();
-  			disp_modeSet = false;	//Jump to element adjusting
-  			Screen = disp_modeVCV ? scr_VCVSetting_IP : scr_BPAPSetting_IP; //Start screen at first element
-  			delay(300);
-  		}
+    if(disp_modeSet){ //Select mode for setting
+      Screen = disp_modeVCV ? scr_Setting_VCV : scr_Setting_BPAP; //Set display Screen
+      if (selectBT.push()){ //Switch selected mode
+        Beep();
+        disp_modeVCV = !disp_modeVCV; //Switching select mode between VCV & BPAP
+      }
+      
+      if(setBT.push()){ //Chose mode, move to elements      
+        Beep();
+        disp_modeSet = false; //Jump to element adjusting
+        Screen = disp_modeVCV ? scr_VCVSetting_IP : scr_BPAPSetting_IP; //Start screen at first element
+        delay(300);
+      }
 
-  		else if(cancelBT.push()) { //Back to current current setting display
-  			Beep();
+      else if(cancelBT.push()) { //Back to current current setting display
+        Beep();
         Screen = disp_modeVCV ? scr_VCVDisplay_Actual : scr_BPAPDisplay_Actual; 
-  			inSetting = false;	//Cancel current adjusting, jump to last setting display
-  		}
+        inSetting = false;  //Cancel current adjusting, jump to last setting display
+      }
 
-  	}else{	//After mode is selected, elements adjusting
-  		if(disp_modeVCV){	//Adjust VCV elements
-  			if (selectBT.push()){
-  				Beep();
-  				SETTING2DISPLAY(); //Transfer setting data to display, incase data is not SET before moving to the next element
-  				Screen++;	//Arrow move to next element
-  				if (Screen > scr_VCVSetting_PEEP) Screen = scr_VCVSetting_IP; //After last element, move arrow to first element
-  			}
+    }else{  //After mode is selected, elements adjusting
+      if(disp_modeVCV){ //Adjust VCV elements
+        if (selectBT.push()){
+          Beep();
+          SETTING2DISPLAY(); //Transfer setting data to display, incase data is not SET before moving to the next element
+          Screen++; //Arrow move to next element
+          if (Screen > scr_VCVSetting_PEEP) Screen = scr_VCVSetting_IP; //After last element, move arrow to first element
+        }
 
-  			switch (Screen) {
-  			    case scr_VCVSetting_IP:
-  			      if (rotary.Value != rotary.lastValue){ //Rotary changing Event
-  						rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
-  						rotary.lastValue = rotary.Value; //Reset rotary change
-  						VCVdisplay.IP += rotary.Change*stepChange.IP; //Changing value with rotary move, each step change by stepChange value
-  						if(inRange(VCVdisplay.IP, minSetting.IP, maxSetting.IP)) Beep(); //Beep only when data in limit range.
-  						disp_change = true; //sth has changed.
-  				  }
-  			      VCVdisplay.IP = constrain(VCVdisplay.IP, minSetting.IP, maxSetting.IP); //Keep value in range (Minimum - Maximum)
-  			      break;
+        switch (Screen) {
+            case scr_VCVSetting_IP:
+              if (rotary.Value != rotary.lastValue){ //Rotary changing Event
+              rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
+              rotary.lastValue = rotary.Value; //Reset rotary change
+              VCVdisplay.IP += rotary.Change*stepChange.IP; //Changing value with rotary move, each step change by stepChange value
+              if(inRange(VCVdisplay.IP, minSetting.IP, maxSetting.IP)) Beep(); //Beep only when data in limit range.
+              disp_change = true; //sth has changed.
+            }
+              VCVdisplay.IP = constrain(VCVdisplay.IP, minSetting.IP, maxSetting.IP); //Keep value in range (Minimum - Maximum)
+              break;
 
-  			    case scr_VCVSetting_TV:
-  			      if (rotary.Value != rotary.lastValue){ //Rotary changing Event
-  						rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
-  						rotary.lastValue = rotary.Value; //Reset rotary change
-  						VCVdisplay.TV += rotary.Change*stepChange.TV; //Changing value with rotary move, each step change by stepChange value
-  						if(inRange(VCVdisplay.TV, minSetting.TV, maxSetting.TV)) Beep(); //Beep only when data in limit range.
-  						disp_change = true; //sth has changed.
-  				  }
-  			      VCVdisplay.TV = constrain(VCVdisplay.TV, minSetting.TV, maxSetting.TV); //Keep value in range (Minimum - Maximum)
-  			      break;
+            case scr_VCVSetting_TV:
+              if (rotary.Value != rotary.lastValue){ //Rotary changing Event
+              rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
+              rotary.lastValue = rotary.Value; //Reset rotary change
+              VCVdisplay.TV += rotary.Change*stepChange.TV; //Changing value with rotary move, each step change by stepChange value
+              if(inRange(VCVdisplay.TV, minSetting.TV, maxSetting.TV)) Beep(); //Beep only when data in limit range.
+              disp_change = true; //sth has changed.
+            }
+              VCVdisplay.TV = constrain(VCVdisplay.TV, minSetting.TV, maxSetting.TV); //Keep value in range (Minimum - Maximum)
+              break;
 
-  			    case scr_VCVSetting_RR:
-  			      if (rotary.Value != rotary.lastValue){ //Rotary changing Event
-  						  rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
-  						  rotary.lastValue = rotary.Value; //Reset rotary change
-  						  VCVdisplay.RR += rotary.Change*stepChange.RR; //Changing value with rotary move, each step change by stepChange value
-  						  if(inRange(VCVdisplay.RR, minSetting.RR, maxSetting.RR)) Beep(); //Beep only when data in limit range.
-  						  disp_change = true; //sth has changed.
-  				    }
-  			      VCVdisplay.RR = constrain(VCVdisplay.RR, minSetting.RR, maxSetting.RR); //Keep value in range (Minimum - Maximum)
-  			      break;
+            case scr_VCVSetting_RR:
+              if (rotary.Value != rotary.lastValue){ //Rotary changing Event
+                rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
+                rotary.lastValue = rotary.Value; //Reset rotary change
+                VCVdisplay.RR += rotary.Change*stepChange.RR; //Changing value with rotary move, each step change by stepChange value
+                if(inRange(VCVdisplay.RR, minSetting.RR, maxSetting.RR)) Beep(); //Beep only when data in limit range.
+                disp_change = true; //sth has changed.
+              }
+              VCVdisplay.RR = constrain(VCVdisplay.RR, minSetting.RR, maxSetting.RR); //Keep value in range (Minimum - Maximum)
+              break;
 
-  			    case scr_VCVSetting_IE:
-  			      if (rotary.Value != rotary.lastValue){ //Rotary changing Event
-  						  rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
-  						  rotary.lastValue = rotary.Value; //Reset rotary change
-  						  VCVdisplay.IE += rotary.Change*stepChange.IE; //Changing value with rotary move, each step change by stepChange value
-  						  if(inRange(VCVdisplay.IE, minSetting.IE, maxSetting.IE)) Beep(); //Beep only when data in limit range.
-  						  disp_change = true; //sth has changed.
-  				    }
-  			      VCVdisplay.IE = constrain(VCVdisplay.IE, minSetting.IE, maxSetting.IE); //Keep value in range (Minimum - Maximum)
-  			      break;
+            case scr_VCVSetting_IE:
+              if (rotary.Value != rotary.lastValue){ //Rotary changing Event
+                rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
+                rotary.lastValue = rotary.Value; //Reset rotary change
+                VCVdisplay.IE += rotary.Change*stepChange.IE; //Changing value with rotary move, each step change by stepChange value
+                if(inRange(VCVdisplay.IE, minSetting.IE, maxSetting.IE)) Beep(); //Beep only when data in limit range.
+                disp_change = true; //sth has changed.
+              }
+              VCVdisplay.IE = constrain(VCVdisplay.IE, minSetting.IE, maxSetting.IE); //Keep value in range (Minimum - Maximum)
+              break;
 
-  			    case scr_VCVSetting_PEEP:
-  			      if (rotary.Value != rotary.lastValue){ //Rotary changing Event
-  						  rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
-  						  rotary.lastValue = rotary.Value; //Reset rotary change
-  						  VCVdisplay.PEEP += rotary.Change*stepChange.PEEP; //Changing value with rotary move, each step change by stepChange value
-  						  if(inRange(VCVdisplay.PEEP, minSetting.PEEP, maxSetting.PEEP)) Beep(); //Beep only when data in limit range.
-  						  disp_change = true; //sth has changed.
-  				    }
-  			      VCVdisplay.PEEP = constrain(VCVdisplay.PEEP, minSetting.PEEP, maxSetting.PEEP); //Keep value in range (Minimum - Maximum)
-  			      break;
+            case scr_VCVSetting_PEEP:
+              if (rotary.Value != rotary.lastValue){ //Rotary changing Event
+                rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
+                rotary.lastValue = rotary.Value; //Reset rotary change
+                VCVdisplay.PEEP += rotary.Change*stepChange.PEEP; //Changing value with rotary move, each step change by stepChange value
+                if(inRange(VCVdisplay.PEEP, minSetting.PEEP, maxSetting.PEEP)) Beep(); //Beep only when data in limit range.
+                disp_change = true; //sth has changed.
+              }
+              VCVdisplay.PEEP = constrain(VCVdisplay.PEEP, minSetting.PEEP, maxSetting.PEEP); //Keep value in range (Minimum - Maximum)
+              break;
 
-  			    default:
-  			      Screen = scr_VCVSetting_IP;
-  			   	  break;
-  			}
-  		}else{	//Adjust BPAP elements
-  			if (selectBT.push()){
-  				Beep();
-  				SETTING2DISPLAY(); //Transfer setting data to display, incase data is not SET before moving to the next element
-  				Screen++;	//Arrow move to next element
-  				if (Screen > scr_BPAPSetting_FST) Screen = scr_BPAPSetting_IP; //After last element, move arrow to first element
-  			}
+            default:
+              Screen = scr_VCVSetting_IP;
+              break;
+        }
+      }else{  //Adjust BPAP elements
+        if (selectBT.push()){
+          Beep();
+          SETTING2DISPLAY(); //Transfer setting data to display, incase data is not SET before moving to the next element
+          Screen++; //Arrow move to next element
+          if (Screen > scr_BPAPSetting_FST) Screen = scr_BPAPSetting_IP; //After last element, move arrow to first element
+        }
 
-  			switch (Screen) {
-  			    case scr_BPAPSetting_IP:
-  			      	if (rotary.Value != rotary.lastValue){ //Rotary changing Event
-  						rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
-  						rotary.lastValue = rotary.Value; //Reset rotary change
-  						BPAPdisplay.IP += rotary.Change*stepChange.IP; //Changing value with rotary move, each step change by stepChange value
-  						if(inRange(BPAPdisplay.IP, minSetting.IP, maxSetting.IP)) Beep(); //Beep only when data in limit range.
-  						disp_change = true; //sth has changed.
-  				  	}
-  			      	BPAPdisplay.IP = constrain(BPAPdisplay.IP, minSetting.IP, maxSetting.IP); //Keep value in range (Minimum - Maximum)
-  			      	break;
+        switch (Screen) {
+            case scr_BPAPSetting_IP:
+                if (rotary.Value != rotary.lastValue){ //Rotary changing Event
+              rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
+              rotary.lastValue = rotary.Value; //Reset rotary change
+              BPAPdisplay.IP += rotary.Change*stepChange.IP; //Changing value with rotary move, each step change by stepChange value
+              if(inRange(BPAPdisplay.IP, minSetting.IP, maxSetting.IP)) Beep(); //Beep only when data in limit range.
+              disp_change = true; //sth has changed.
+              }
+                BPAPdisplay.IP = constrain(BPAPdisplay.IP, minSetting.IP, maxSetting.IP); //Keep value in range (Minimum - Maximum)
+                break;
 
-  			    case scr_BPAPSetting_PEEP:
-	  				if (rotary.Value != rotary.lastValue){ //Rotary changing Event
-  						rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
-  						rotary.lastValue = rotary.Value; //Reset rotary change
-  						BPAPdisplay.PEEP += rotary.Change*stepChange.PEEP; //Changing value with rotary move, each step change by stepChange value
-  						if(inRange(BPAPdisplay.PEEP, minSetting.PEEP, maxSetting.PEEP)) Beep(); //Beep only when data in limit range.
-  						disp_change = true; //sth has changed.
-  				  	}
-  			      	BPAPdisplay.PEEP = constrain(BPAPdisplay.PEEP, minSetting.PEEP, maxSetting.PEEP); //Keep value in range (Minimum - Maximum)
-  			      	break;
+            case scr_BPAPSetting_PEEP:
+            if (rotary.Value != rotary.lastValue){ //Rotary changing Event
+              rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
+              rotary.lastValue = rotary.Value; //Reset rotary change
+              BPAPdisplay.PEEP += rotary.Change*stepChange.PEEP; //Changing value with rotary move, each step change by stepChange value
+              if(inRange(BPAPdisplay.PEEP, minSetting.PEEP, maxSetting.PEEP)) Beep(); //Beep only when data in limit range.
+              disp_change = true; //sth has changed.
+              }
+                BPAPdisplay.PEEP = constrain(BPAPdisplay.PEEP, minSetting.PEEP, maxSetting.PEEP); //Keep value in range (Minimum - Maximum)
+                break;
 
-  			    case scr_BPAPSetting_TP:
-	  			    if (rotary.Value != rotary.lastValue){ //Rotary changing Event
-  						rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
-  						rotary.lastValue = rotary.Value; //Reset rotary change
-  						BPAPdisplay.TP += rotary.Change*stepChange.TP; //Changing value with rotary move, each step change by stepChange value
-  						if(inRange(BPAPdisplay.TP, minSetting.TP, maxSetting.TP)) Beep(); //Beep only when data in limit range.
-  						disp_change = true; //sth has changed.
-  				  	}
-  			      	BPAPdisplay.TP = constrain(BPAPdisplay.TP, minSetting.TP, maxSetting.TP); //Keep value in range (Minimum - Maximum)
-  			      	break;
+            case scr_BPAPSetting_TP:
+              if (rotary.Value != rotary.lastValue){ //Rotary changing Event
+              rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
+              rotary.lastValue = rotary.Value; //Reset rotary change
+              BPAPdisplay.TP += rotary.Change*stepChange.TP; //Changing value with rotary move, each step change by stepChange value
+              if(inRange(BPAPdisplay.TP, minSetting.TP, maxSetting.TP)) Beep(); //Beep only when data in limit range.
+              disp_change = true; //sth has changed.
+              }
+                BPAPdisplay.TP = constrain(BPAPdisplay.TP, minSetting.TP, maxSetting.TP); //Keep value in range (Minimum - Maximum)
+                break;
 
-  			    case scr_BPAPSetting_FST:
-	  			    if (rotary.Value != rotary.lastValue){ //Rotary changing Event
-  						rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
-  						rotary.lastValue = rotary.Value; //Reset rotary change
-  						BPAPdisplay.FST += rotary.Change*stepChange.FST; //Changing value with rotary move, each step change by stepChange value
-  						if(inRange(BPAPdisplay.FST, minSetting.FST, maxSetting.FST)) Beep(); //Beep only when data in limit range.
-  						disp_change = true; //sth has changed.
-  				  	}
-  			      	BPAPdisplay.FST = constrain(BPAPdisplay.FST, minSetting.FST, maxSetting.FST); //Keep value in range (Minimum - Maximum)
-  			      	break;
+            case scr_BPAPSetting_FST:
+              if (rotary.Value != rotary.lastValue){ //Rotary changing Event
+              rotary.Change = rotary.Value - rotary.lastValue; //Record rotoray change
+              rotary.lastValue = rotary.Value; //Reset rotary change
+              BPAPdisplay.FST += rotary.Change*stepChange.FST; //Changing value with rotary move, each step change by stepChange value
+              if(inRange(BPAPdisplay.FST, minSetting.FST, maxSetting.FST)) Beep(); //Beep only when data in limit range.
+              disp_change = true; //sth has changed.
+              }
+                BPAPdisplay.FST = constrain(BPAPdisplay.FST, minSetting.FST, maxSetting.FST); //Keep value in range (Minimum - Maximum)
+                break;
 
-  			    default:
-  			      Screen = scr_BPAPSetting_IP;
-  			      break;
-  			}
-  		}
+            default:
+              Screen = scr_BPAPSetting_IP;
+              break;
+        }
+      }
 
-  		//Save selected element's data
-  		if (setBT.push()){
+      //Save selected element's data
+      if (setBT.push()){
         if(disp_change){
           setBT.resetHold();
           Beep();
@@ -568,116 +569,88 @@ void loop() {
           EEPROM_update();  //Update data to memory
           disp_change = false; //Change has been saved, nth changed.
         }
-  		}else if(cancelBT.push()){	//Back to Selecting mode
-  			Beep();
-  			if (disp_change){
-  				SETTING2DISPLAY();		//Cancel unsaved adjusting, Display saved setting
-  				disp_change = false;    //Reset changing state
-  			}else disp_modeSet = true;	//Jump back to Select Mode
-  		}
+      }else if(cancelBT.push()){  //Back to Selecting mode
+        Beep();
+        if (disp_change){
+          SETTING2DISPLAY();    //Cancel unsaved adjusting, Display saved setting
+          disp_change = false;    //Reset changing state
+        }else disp_modeSet = true;  //Jump back to Select Mode
+      }
 
-  		//Confirm to use the setting, exit setting screen to display
-  		if (setBT.onHold()>=1500){
+      //Confirm to use the setting, exit setting screen to display
+      if (setBT.onHold()>=1500){
         setBT.resetHold();
-  			Beep(2,200);
-  			alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_DATA_SETTING);
+        Beep(2,200);
+        alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_DATA_SETTING);
         Screen = modeVCV? scr_VCVDisplay_Actual:scr_BPAPDisplay_Actual;
-  			inSetting = false; //Jump to display current setting
-  		}
-  	}
-  	
+        inSetting = false; //Jump to display current setting
+      }
+    }
+    
   }else{
-  	rotary.lastValue = rotary.Value; //Reset rotary change accidently
+    rotary.lastValue = rotary.Value; //Reset rotary change accidently
 
-  	if (modeVCV){
-  		if (isBreathing){
+    if (modeVCV){
+      if (isBreathing){
         // Alarm trigger
         if (!alarming.pressure_sensor_fail){
           alarming.pressure_ip_fail = outOfRange(actual.IP, VCVsetting.IP, alarming.pressure_ip_offset);
           alarming.pressure_peep_fail = outOfRange(actual.PEEP, VCVsetting.PEEP, alarming.pressure_peep_offset);
           isAlarm = (alarming.pressure_ip_fail || alarming.pressure_peep_fail);
         }
-
-        //isAlarm = (alarming.pressure_sensor_fail || alarming.pressure_ip_fail || alarming.pressure_peep_fail);
-
-        /* Alarm off */
-  			if (isAlarm){
-          //TODO: identify the alarm type and alarm Screen
-
-          /* Silent button event
-           * push to silent the buzzer for silinet_timout
-           * trigger buzzer silent state to true (silent is true)
-           * retrigger buzzer state comparing by silent_timer and millis
-           */
-          if (silentBT.press()){
-            silentBT.resetHold();
-            alarming.buzzer_is_silenced = true;
-            alarming.silent_timer = millis();
-          }
-          //Reset the buzzer alarm state to not silent
-          if (alarming.buzzer_is_silenced){
-            alarming.buzzer_is_silenced = (millis()-alarming.silent_timer<=alarming.silent_timout);
-          }
-
-          /* Alarm trigger
-           * Flash LED and Sound the alarm with specific alarm type (num)
-           * recording timer for alarm loop sound
-           * buzzer state for silent the buzzer but keep the LED flash
-           */
-          Alarm(2, alarming.off_timer, alarming.buzzer_is_silenced);
-          
-          /* Switch Screen (Select button)
-           * Can switch between, Alarm Display, Setting Display & Actual Display
-           */
-          if (selectBT.push()){
-            Beep();
-            Screen++;
-            if (Screen > scr_VCVAlarm_IP) Screen = scr_VCVDisplay_Actual;
-          }
-          //TODO: check if the Screen is not in Alarm(screen) range, reset timer and get back to alarm Screen
-  			}else{
-
-          // Reset Alarm timer
-          alarming.silent_timer = millis();
-          alarming.off_timer = millis();
-
-          /* Switch screen (Select button)
-           * toggle between Actual Display & Setting Display
-           */
-          if (selectBT.push()){
-            Beep();
-            Screen++;
-            if (Screen > scr_VCVDisplay_Setting) Screen = scr_VCVDisplay_Actual;
-          }
+        //Display Alarm
+        if (isAlarm){
+          if (alarming.pressure_peep_fail) Screen = scr_VCVAlarm_PEEP;
+          if (alarming.pressure_ip_fail) Screen = scr_VCVAlarm_IP;
+        }else{
+          Screen = scr_VCVDisplay_Actual;
         }
+      }else{
+        Screen = scr_VCVDisplay_Setting;
+      }
 
-  		}else{
-  			Screen = scr_VCVDisplay_Setting;
-  		}
-
-  	}else{
-
+    }else{
+      //BPAP Operation mode
       //TODO: Update same to VCV mode
 
-  		if (isBreathing){
-  			//TODO: Display Actual data
-  			//TODO: Checking Alarm 
-  			if (isAlarm){
-  				//TODO: Trigger Alarm function
-  				//TODO: if select is pressed, show current setting
-  			}
-  		}else{
-  			Screen = scr_BPAPDisplay_Setting;
-  		}
+      if (isBreathing){
+        //TODO: Display Actual data
+        //TODO: Checking Alarm 
+        if (isAlarm){
+          //TODO: Trigger Alarm function
+          //TODO: if select is pressed, show current setting
+        }
+      }else{
+        Screen = scr_BPAPDisplay_Setting;
+      }
 
-  	}
+    }
 
-  	//Go to setting: press Cancel
-  	if (cancelBT.push()){
-  		Beep(2, 200);
-  		inSetting = true;		//Jump to Setting
-  		disp_modeSet = false;	//Jump to change current setting
-  	}
+    //Go to setting: press Cancel
+    if (cancelBT.push()){
+      Beep(2, 200);
+      inSetting = true;   //Jump to Setting
+      disp_modeSet = false; //Jump to change current setting
+    }
+  }
+
+  /* Alarm Sound Event
+   * silent button
+   */
+  if (isAlarm) {
+    if (silentBT.press()){
+      silentBT.resetHold();
+      alarming.buzzer_is_silenced = true;
+      alarming.silent_timer = millis();
+    }
+    //Reset the buzzer alarm state to not silent
+    if (alarming.buzzer_is_silenced){
+      alarming.buzzer_is_silenced = (millis()-alarming.silent_timer<=alarming.silent_timout);
+    }
+    Alarm(secondary_alarm, alarming.off_timer, alarming.buzzer_is_silenced);
+  }else{
+    alarming.silent_timer = millis();
+    alarming.off_timer = millis();
   }
 
   lcdDiplay(Screen);
@@ -691,12 +664,12 @@ void pressureBEGIN(){
   }
 }
 
-bool pressureCMH2O(float &_pressure){
+bool pressureCMH2O(int8_t &_pressure){
   bool _status = false;
-    const float atmospheric_pressure = 1013; // 1013 mbar
-    char status;
-    double T,P;
-    status = BMP180.startTemperature();
+  const float atmospheric_pressure = 1013; // 1013 mbar
+  char status;
+  double T,P;
+  status = BMP180.startTemperature();
     if (status != 0){
       delay(status); // Wait for the measurement to complete
       status = BMP180.getTemperature(T);
@@ -738,17 +711,17 @@ void lcdDiplay(uint8_t _screen){
   String str_vcv_ie = (String)VCVdisplay.IE;
   str_vcv_ie[3]=' ';
   if((int)(VCVdisplay.IE*10)%10 == 0){
-  	str_vcv_ie[1]=' ';
-  	str_vcv_ie[2]=' ';
+    str_vcv_ie[1]=' ';
+    str_vcv_ie[2]=' ';
   }
 
   //Make FST display on LCD like, 1 or 1.5 or 2
   String str_bpap_fst = (String)BPAPdisplay.FST;
   str_bpap_fst[3]='s';
   if((int)(BPAPdisplay.FST*10)%10 == 0){
-  	str_bpap_fst[1]='s';
-  	str_bpap_fst[2]=' ';
-  	str_bpap_fst[3]=' ';
+    str_bpap_fst[1]='s';
+    str_bpap_fst[2]=' ';
+    str_bpap_fst[3]=' ';
   }
 
   switch (_screen) {
@@ -836,9 +809,9 @@ void lcdDiplay(uint8_t _screen){
       case scr_VCVDisplay_Actual:
         //           -----------------------
         dispRow.R1 = "     VCV ACTUAL     ";
-        dispRow.R2 = " IP      "+(String)actual.IP+"cm   ";
+        dispRow.R2 = " IP      "+(String)actual.IP+"cm      ";
         dispRow.R3 = " Plateau "+(String)actual.Plateau+"cm      ";
-        dispRow.R4 = " PEEP    "+(String)actual.PEEP+"cm    ";
+        dispRow.R4 = " PEEP    "+(String)actual.PEEP+"cm       ";
         //           -----------------------
         break;
 
@@ -851,12 +824,21 @@ void lcdDiplay(uint8_t _screen){
         //           -----------------------
         break;
 
+      case scr_VCVAlarm_PEEP:
+        //           -----------------------
+        dispRow.R1 = "   >>> ALARM <<<    ";
+        dispRow.R2 = "                    ";
+        dispRow.R3 = " IP SET:  "+(String)VCVdisplay.IP+"cm      ";
+        dispRow.R4 = " IP ACTL: "+(String)actual.IP+"cm      ";
+        //           -----------------------
+        break;
+
       case scr_VCVAlarm_IP:
         //           -----------------------
         dispRow.R1 = "   >>> ALARM <<<    ";
         dispRow.R2 = "                    ";
-        dispRow.R3 = " IP SET:  400ml     ";
-        dispRow.R4 = " IP ACTL: 350ml     ";
+        dispRow.R3 = " PEEP SET:  "+(String)VCVdisplay.PEEP+"cm    ";
+        dispRow.R4 = " PEEP ACTL: "+(String)actual.PEEP+"cm    ";
         //           -----------------------
         break;
 
@@ -922,7 +904,7 @@ void lcdDiplay(uint8_t _screen){
         //           -----------------------
         break;
 
-      case scr_BPAPlarm:	
+      case scr_BPAPlarm:  
         //           -----------------------
         dispRow.R1 = " >> BPAP  FIALED << ";
         dispRow.R2 = " >> VCV FAILSAFE << ";
@@ -935,7 +917,7 @@ void lcdDiplay(uint8_t _screen){
         // do something
         break;
   }
-
+  delay(1);
   //Print new data
   lcd.setCursor(0,0);
   lcd.print(dispRow.R1);
@@ -947,21 +929,21 @@ void lcdDiplay(uint8_t _screen){
   lcd.print(dispRow.R4);
 }
 
-void Alarm(uint8_t _num, long &_alarm_timer, bool _silent_buzzer){
+void Alarm(Alarm_Type _num, long &_alarm_timer, bool _silent_buzzer){
   uint16_t _delay, _sound_num, _loop_timer;
 
   // TODO: define the alarm type (_num)
 
   switch (_num) {
-      case 1:
+      case primary_alarm:
         _delay = 200;
         _sound_num = 1;
-        _loop_timer = 1000;
+        _loop_timer = 500;
         break;
-      case 2:
+      case secondary_alarm:
         _delay = 200;
         _sound_num = 2;
-        _loop_timer = 2000;
+        _loop_timer = 1500;
         break;
   }  
 
@@ -998,31 +980,31 @@ void Beep(int _num, long _t){
 }
 
 void SETTING2DISPLAY(){
-	//disp_modeVCV = modeVCV;
-	VCVdisplay.IP = VCVsetting.IP;
-	VCVdisplay.TV = VCVsetting.TV;
-	VCVdisplay.RR = VCVsetting.RR;
-	VCVdisplay.IE = VCVsetting.IE;
-	VCVdisplay.PEEP = VCVsetting.PEEP;
+  //disp_modeVCV = modeVCV;
+  VCVdisplay.IP = VCVsetting.IP;
+  VCVdisplay.TV = VCVsetting.TV;
+  VCVdisplay.RR = VCVsetting.RR;
+  VCVdisplay.IE = VCVsetting.IE;
+  VCVdisplay.PEEP = VCVsetting.PEEP;
 
-	BPAPdisplay.IP = BPAPsetting.IP;
-	BPAPdisplay.PEEP = BPAPsetting.PEEP;
-	BPAPdisplay.TP = BPAPsetting.TP;
-	BPAPdisplay.FST = BPAPsetting.FST;
+  BPAPdisplay.IP = BPAPsetting.IP;
+  BPAPdisplay.PEEP = BPAPsetting.PEEP;
+  BPAPdisplay.TP = BPAPsetting.TP;
+  BPAPdisplay.FST = BPAPsetting.FST;
 }
 
 void DISPLAY2SETTING(){
-	modeVCV = disp_modeVCV;
-	VCVsetting.IP = VCVdisplay.IP;
-	VCVsetting.TV = VCVdisplay.TV;
-	VCVsetting.RR = VCVdisplay.RR;
-	VCVsetting.IE = VCVdisplay.IE;
-	VCVsetting.PEEP = VCVdisplay.PEEP;
+  modeVCV = disp_modeVCV;
+  VCVsetting.IP = VCVdisplay.IP;
+  VCVsetting.TV = VCVdisplay.TV;
+  VCVsetting.RR = VCVdisplay.RR;
+  VCVsetting.IE = VCVdisplay.IE;
+  VCVsetting.PEEP = VCVdisplay.PEEP;
 
-	BPAPsetting.IP = BPAPdisplay.IP;
-	BPAPsetting.PEEP = BPAPdisplay.PEEP;
-	BPAPsetting.TP = BPAPdisplay.TP;
-	BPAPsetting.FST = BPAPdisplay.FST;
+  BPAPsetting.IP = BPAPdisplay.IP;
+  BPAPsetting.PEEP = BPAPdisplay.PEEP;
+  BPAPsetting.TP = BPAPdisplay.TP;
+  BPAPsetting.FST = BPAPdisplay.FST;
 }
 
 void EEPROM_update(){
@@ -1101,7 +1083,7 @@ bool wireRequest(uint8_t _addr){
 }
 
 bool inRange(int _val, int _min, int _max){
-	return (_val >= _min) && (_val <= _max);
+  return (_val >= _min) && (_val <= _max);
 }
 
 bool outOfRange(float _input, float _set, float _offset){
