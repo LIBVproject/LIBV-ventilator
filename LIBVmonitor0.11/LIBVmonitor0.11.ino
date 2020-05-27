@@ -368,6 +368,7 @@ void loop() {
   * - Capture PIP and PEEP for actual displays
   */
   alarming.pressure_sensor_fail = !pressureCMH2O(actual.pressureRead); //pressure in cmH2O
+  isAlarm = alarming.pressure_sensor_fail;
   //Serial.println(actual.pressureRead);
 
   // Pressure operating only when the sensor not fail
@@ -395,13 +396,6 @@ void loop() {
       actual.PEEP = actual.capturePEEP;
       actual.capturePEEP = 40.0;
     }
-  }else{
-    /* Fail to read pressure
-     * Top-priority alarm
-     */
-    if (DEBUG) Serial.println("Pressure sensor fail!");
-    Alarm(primary_alarm, alarming.off_timer, alarming.buzzer_is_silenced);
-    Screen = scr_PressureFail;
   }
 
   /*  Control panel action
@@ -634,6 +628,8 @@ void loop() {
     }
   }
 
+  if (alarming.pressure_sensor_fail) Screen = scr_PressureFail;
+
   /* Alarm Sound Event
    * silent button
    */
@@ -809,8 +805,8 @@ void lcdDiplay(uint8_t _screen){
       case scr_VCVDisplay_Actual:
         //           -----------------------
         dispRow.R1 = "     VCV ACTUAL     ";
-        dispRow.R2 = " IP      "+(String)actual.IP+"cm      ";
-        dispRow.R3 = " Plateau "+(String)actual.Plateau+"cm      ";
+        dispRow.R2 = " IP      "+(String)actual.IP+"cm       ";
+        dispRow.R3 = " Plateau "+(String)actual.Plateau+"cm       ";
         dispRow.R4 = " PEEP    "+(String)actual.PEEP+"cm       ";
         //           -----------------------
         break;
