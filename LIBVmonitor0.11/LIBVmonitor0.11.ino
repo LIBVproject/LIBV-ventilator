@@ -247,7 +247,7 @@ struct TIMING{
 
 struct ALARMING{
   const long silent_timout = 600000;          // silent buzzer for 10mn after silent button is pusheed
-  const float pressure_ip_offset = 5.0;       // tolorance of IP alarm (cm)
+  const float pressure_ip_offset = 10.0;       // tolorance of IP alarm (cm)
   const float pressure_peep_offset = 5.0;     // tolorance of PEEP alarm (cm)
   long off_timer = 0;                         // reset alarm loop
   long silent_timer = 0;                      // reset silent buzzer
@@ -596,6 +596,7 @@ void loop() {
         if (isAlarm){
           if (alarming.pressure_peep_fail) Screen = scr_VCVAlarm_PEEP;
           if (alarming.pressure_ip_fail) Screen = scr_VCVAlarm_IP;
+          if (selectBT.press()) Screen = scr_VCVDisplay_Actual;
         }else{
           Screen = scr_VCVDisplay_Actual;
         }
@@ -824,8 +825,8 @@ void lcdDiplay(uint8_t _screen){
         //           -----------------------
         dispRow.R1 = "   >>> ALARM <<<    ";
         dispRow.R2 = "                    ";
-        dispRow.R3 = " IP SET:  "+(String)VCVdisplay.IP+"cm      ";
-        dispRow.R4 = " IP ACTL: "+(String)actual.IP+"cm      ";
+        dispRow.R3 = " PEEP SET:  "+(String)VCVdisplay.PEEP+"cm    ";
+        dispRow.R4 = " PEEP ACTL: "+(String)actual.PEEP+"cm    ";
         //           -----------------------
         break;
 
@@ -833,8 +834,8 @@ void lcdDiplay(uint8_t _screen){
         //           -----------------------
         dispRow.R1 = "   >>> ALARM <<<    ";
         dispRow.R2 = "                    ";
-        dispRow.R3 = " PEEP SET:  "+(String)VCVdisplay.PEEP+"cm    ";
-        dispRow.R4 = " PEEP ACTL: "+(String)actual.PEEP+"cm    ";
+        dispRow.R3 = " IP SET:  "+(String)VCVdisplay.IP+"cm     ";
+        dispRow.R4 = " IP ACTL: "+(String)actual.IP+"cm     ";
         //           -----------------------
         break;
 
