@@ -247,17 +247,18 @@ void loop() {
         goPos = TV2RPB;
         speedSet = speed.inhale;
         
-        /*
-        if(millis()-timer>=timeIn || abs(goPos-aPos)<=0.04){
+        if(millis()-timer>=timing.inhale || abs(goPos-aPos)<=0.01){
           timer = millis();
-          venStat = pushOUT;
+          actual.Position = 100*(aPos/goPos); // Record poisition in percentage
+          state = PLATEAU; //reached desire position, move on
         }
-		    */
-
+		    
+        /*
         if(abs(goPos-aPos)<=0.01) {
         	timer = millis();
         	state = PLATEAU; //reached desire position, move on
         }
+        */
         break;
 
       /* Meassuring Plateau Pressure */
