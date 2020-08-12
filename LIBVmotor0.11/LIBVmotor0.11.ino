@@ -25,7 +25,7 @@
 #include <BTS7960.h>
 #include <button.h>
 
-#define DEBUG false
+#define DEBUG true
 
 #define STATION_I2C_ADD 8 //I2C slave station Address
 
@@ -33,6 +33,7 @@
 const int TV_ADD= 10, TI_ADD=11, IE_ADD=12;
 
 enum I2C_Func{
+  I2C_CMD_POWER,
   I2C_CMD_MOTOR,
   I2C_DATA_SETTING,
   I2C_DATA_PRESSURE,
@@ -137,7 +138,9 @@ float TV2RPB=0.0;
 double speedSet = 0.0;  //speed to push in and push out of the motor, in round per second (rps)
 
 unsigned long timer=0;              //to store the timer of running, millis(), millisecond
+bool isPowered = false;
 bool isBreathing=false;     //Machine is running or not, true: help breathing & false: standby
+bool isInitialized=false;
 uint8_t state = 0;
 enum States{
   INHALE,       //0
@@ -204,33 +207,6 @@ void setup() {
   BPM_Timing();  //Calc breath timing
   
   motor.init();  //Motor Setup
-
-  //Initialize the Arms
-  timer = millis();
-  while(true){
-    motor.setPWM(-200);
-    if(!digitalRead(HALL1_PIN) || millis()-timer>=10000) break;
-  }
-  motor.setPWM(0);
-  delay(300);
-
-  motor.setPWM(100);
-  delay(500);
-
-  timer = millis();
-  while(true){
-    motor.setPWM(-80);
-    if(!digitalRead(HALL1_PIN) || millis()-timer>=5000) break;
-  }
-  motor.setPWM(0);
-  digitalWrite(LED_PIN, 1);
-  delay(500);
-
-  //Reset Encoder & Timer
-  Enc.write(0);
-  xEn = Enc.read();
-  timer = millis();
-  xt=millis();
 }
 
 
@@ -240,22 +216,30 @@ void loop() {
   //TODO: Move initiate state HERE
 
   digitalWrite(LED_PIN, isBreathing);
-  if(!isBreathing){
-  	speedSet = speed.exhale;
-    goPos = ZERO; //go to HOME position
-    state = REST; //reset state
-  }else{
-    if (modeVCV) {
-      //VCV mode
-      runVCV();
+  if (isPowered) {
+    if (isInitialized) {
+      if(!isBreathing){
+        speedSet = speed.exhale;
+        goPos = ZERO; //go to HOME position
+        state = REST; //reset state
+      }else{
+        if (modeVCV) {
+          //VCV mode
+          runVCV();
+        }else{
+          //BPAP modeb
+          runBPAP();
+        }
+      }
+      MotorControl();
     }else{
-      //BPAP modeb
-      runBPAP();
+      isInitialized = initHome();
     }
-
-    
+  }else {
+    isInitialized = false;
+    motor.setPWM(0);
   }
-  MotorControl();
+  
 }
 
 void runVCV(){
@@ -313,6 +297,37 @@ void runBPAP(){
   /*
   
   */
+}
+
+bool initHome(){
+  //Initialize the Arms
+  timer = millis();
+  while(true){
+    motor.setPWM(-200);
+    if(!digitalRead(HALL1_PIN) || millis()-timer>=10000) break;
+  }
+  motor.setPWM(0);
+  delay(300);
+
+  motor.setPWM(100);
+  delay(500);
+
+  timer = millis();
+  while(true){
+    motor.setPWM(-80);
+    if(!digitalRead(HALL1_PIN) || millis()-timer>=5000) break;
+  }
+  motor.setPWM(0);
+  digitalWrite(LED_PIN, 1);
+  delay(500);
+
+  //Reset Encoder & Timer
+  Enc.write(0);
+  xEn = Enc.read();
+  timer = millis();
+  xt=millis();
+
+  return true;
 }
 
 void MotorControl(){
@@ -434,6 +449,10 @@ void receiveEvent(int howMany) {
   uint8_t _func = Wire.read();
   if (DEBUG) Serial.println("I2C Func: "+(String)_func);
   switch (_func) {
+      case I2C_CMD_POWER:
+        isPowered = (bool)Wire.read();
+        break;
+
       case I2C_CMD_MOTOR:    //Read as motor command
         isBreathing = (bool)Wire.read();
         break;

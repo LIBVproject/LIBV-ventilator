@@ -47,6 +47,7 @@
 #define I2C_ADDR_LCD 0x27
 
 enum I2C_Func{
+  I2C_CMD_POWER,
   I2C_CMD_MOTOR,
   I2C_DATA_SETTING,
   I2C_DATA_PRESSURE,
@@ -351,6 +352,7 @@ void loop() {
     lcd.backlight();
     startUpScreen();
     isPowered = true;
+    alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_CMD_POWER);
   }else if (isPowered && powerBT.onHold()>=3000) {
     powerBT.resetHold();
     isBreathing = false; // stop the motor
@@ -359,6 +361,7 @@ void loop() {
     lcd.clear();
     lcd.noBacklight();
     isPowered = false;
+    alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_CMD_POWER);
   }
   
   if (isPowered && !isBreathing && breatheBT.push()){
@@ -1043,6 +1046,10 @@ bool wireData(uint8_t _addr, I2C_Func _func){
   Wire.write(_func);
 
   switch (_func) {
+      case I2C_CMD_POWER:
+        Wire.write((int)isPowered);
+        break;
+
       case I2C_CMD_MOTOR:     // Send motor cmd to slave
         Wire.write((int)isBreathing);
         break;
