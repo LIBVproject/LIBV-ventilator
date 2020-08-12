@@ -13,7 +13,7 @@
  *
  * LIBRARY:
  * - Encoder: https://github.com/PaulStoffregen/Encoder
- * - simplePID: https://github.com/eTRONICSKH/SimplePID-Arduino-Library
+ * - simplePID: https://github.com/eTRONICSKH/SimplePID-Arduino-Library-V01
  * - BTS7960 Driver: https://github.com/eTRONICSKH/BTS7960-Driver-Arduino-Library
  * - button: https://github.com/eTRONICSKH/SimpleButton-Arduino-Library
  */
@@ -94,8 +94,8 @@ struct BPAP_MODE {
 bool modeVCV=true;
 
 //P-IN: Hall switch
-#define HALL1_PIN 11
-#define HALL2_PIN 10
+#define HALL1_PIN A0
+#define HALL2_PIN A1
 
 //P-IN: Button
 #define BREATH_PIN 12
@@ -223,8 +223,8 @@ void setup() {
     if(!digitalRead(HALL1_PIN) || millis()-timer>=5000) break;
   }
   motor.setPWM(0);
-  delay(500);
   digitalWrite(LED_PIN, 1);
+  delay(500);
 
   //Reset Encoder & Timer
   Enc.write(0);
@@ -237,11 +237,29 @@ void setup() {
 void loop() {
   //readSerial();  //Testing cmd from Serial
 
+  //TODO: Move initiate state HERE
+
+  digitalWrite(LED_PIN, isBreathing);
   if(!isBreathing){
   	speedSet = speed.exhale;
     goPos = ZERO; //go to HOME position
+    state = REST; //reset state
   }else{
-    switch(state){
+    if (modeVCV) {
+      //VCV mode
+      runVCV();
+    }else{
+      //BPAP modeb
+      runBPAP();
+    }
+
+    
+  }
+  MotorControl();
+}
+
+void runVCV(){
+  switch(state){
       /* Inhale state*/
       case INHALE:
         goPos = TV2RPB;
@@ -252,11 +270,11 @@ void loop() {
           actual.Position = 100*(aPos/goPos); // Record poisition in percentage
           state = PLATEAU; //reached desire position, move on
         }
-		    
+        
         /*
         if(abs(goPos-aPos)<=0.01) {
-        	timer = millis();
-        	state = PLATEAU; //reached desire position, move on
+          timer = millis();
+          state = PLATEAU; //reached desire position, move on
         }
         */
         break;
@@ -289,8 +307,12 @@ void loop() {
         }
         break;
     }
-  }
-  MotorControl();
+}
+
+void runBPAP(){
+  /*
+  
+  */
 }
 
 void MotorControl(){

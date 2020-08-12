@@ -6,7 +6,7 @@
  *
  * LIBRARY:
  * - Encoder: https://github.com/PaulStoffregen/Encoder
- * - simplePID: https://github.com/eTRONICSKH/SimplePID-Arduino-Library
+ * - simplePID: https://github.com/eTRONICSKH/SimplePID-Arduino-Library-V01
  * - BTS7960 Driver: https://github.com/eTRONICSKH/BTS7960-Driver-Arduino-Library
  * - button: https://github.com/eTRONICSKH/SimpleButton-Arduino-Library
  */
@@ -26,7 +26,6 @@
  * - TP: Trigger Pressure                               cm.H20
  * - FST: Failsafe Time ratio
  * - RR: Resporatory Rate                 Breathe Per minutes
- *
  */
 
 #include <EEPROM.h>
@@ -34,8 +33,8 @@
 #include <LiquidCrystal_I2C.h>
 #include <Encoder.h>
 #include <button.h>
-#include <SparkFun_MS5803_I2C.h>
 #include <SFE_BMP180.h>
+#include <Adafruit_SleepyDog.h>
 
 #define DEBUG false
 
@@ -95,7 +94,7 @@ struct MIN_SETTING {
 /*    EEPROM ADDRESS     */
 /*************************/
 
-struct EEPROM_ADDR {
+struct EEPROM_ADDR {  
   //Running Mode
   const int MODE = 10;
 
@@ -150,26 +149,27 @@ struct BUTTON_PIN {
   const int SET = 5;    //Save adjustment setting button pin
   const int CANCEL = 6;  //Cancel adjustment saving button pin
   const int SELECT = 7;  //TV adjustment button pin
-  const int TI = 8;      //TI adjustment button pin
-  const int IE = 9;      //IE adjustment button pin
-  const int SILENT = A0; //Silence the alarm button pin
-  const int BREATHE = A1;
+  const int POWER = 8;      //TI adjustment button pin
+  const int BREATHE = 9;      //IE adjustment button pin
+  const int SILENT = 10; //Silence the alarm button pin
 } buttonPin;
 
 //P-IN: Hall switch sensor
-#define HALL1_PIN 11
-#define HALL2_PIN 10
+const int HALL1_PIN = A0;
+const int HALL2_PIN = A1;
 
 //P-OUT: Alarm
-#define BUZZER_PIN 12      //Buzzer pin
-#define LED_PIN 13         //LED Alarm flash pin
+const int RELAY_PIN  = 11;
+const int BUZZER_PIN = 12;      //Buzzer pin
+const int LED_PIN    = 13;         //LED Alarm flash pin
 
 /*************************/
 /*   LCD SPECIFICATION   */
 /*************************/
-#define LCD_DISP_ROW 4
-#define LCD_DISP_COLUMN 20
+const int LCD_DISP_ROW    = 4;
+const int LCD_DISP_COLUMN = 20;
 
+const int WATCH_DOG_TIMER = 5000;
 
 /*--------------------------------- VARIABLE ------------------------------*/
 
@@ -262,14 +262,15 @@ struct ALARMING{
 uint8_t Screen=scr_PowerON;           //Screen display ID, start with Power On screen
 
 bool modeVCV=true;
-bool inSetting=false;       // true: display setting adjusment, false: save setting and display current setting.
-bool disp_modeSet=true;     //Screen display when start setup mode, true: start with chosing VCV or BPAP, false: go to element setup
-bool disp_modeVCV=true;     //Screen display mode for setup the elements, true: VCV and false: BPAP
-bool disp_select=false;     //Select the element to adjust.
-bool disp_change=false;     //rotary change status.
-bool isAlarm=false;
+bool inSetting    = false;       // true: display setting adjusment, false: save setting and display current setting.
+bool disp_modeSet = true;     //Screen display when start setup mode, true: start with chosing VCV or BPAP, false: go to element setup
+bool disp_modeVCV = true;     //Screen display mode for setup the elements, true: VCV and false: BPAP
+bool disp_select  = false;     //Select the element to adjust.
+bool disp_change  = false;     //rotary change status.
+bool isAlarm      = false;
 
-bool isBreathing=false;     //Machine is running or not, true: help breathing & false: standby
+bool isPowered  = false;
+bool isBreathing= false;     //Machine is running or not, true: help breathing & false: standby
 
 
 
@@ -291,6 +292,7 @@ Encoder rotaryEnc(rotaryPin.DT, rotaryPin.CLK);
 //MS5803 pressure(ADDRESS_LOW);//  ADDRESS_HIGH = 0x76  or  ADDRESS_LOW  = 0x77
 SFE_BMP180 BMP180;
 
+button powerBT(buttonPin.POWER, HIGH);
 button setBT(buttonPin.SET, HIGH);
 button cancelBT(buttonPin.CANCEL, HIGH);
 button selectBT(buttonPin.SELECT, HIGH);
@@ -302,8 +304,10 @@ button swithc2(HALL2_PIN, HIGH);
 
 void setup() {
   Serial.begin (115200);
-
+  int countdownMS = Watchdog.enable(WATCH_DOG_TIMER);
+  
   /* Initialize button */
+  powerBT.init();
   setBT.init();
   cancelBT.init();
   selectBT.init();
@@ -314,37 +318,56 @@ void setup() {
   switch1.init();
   swithc2.init();
 
+  pinMode(RELAY_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(LED_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, 1);
   digitalWrite(BUZZER_PIN, 0);
   digitalWrite(LED_PIN, 0);
+  delay(200);
 
   /*  Initialize LCD   */
   lcd.begin();
-  lcd.backlight();
+  lcd.clear();
+  lcd.noBacklight();
 
   EEPROM_read();
   SETTING2DISPLAY();
   alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_DATA_SETTING);
 
-  startUpScreen();
-
   /* Pressure sensor */
-  pressureBEGIN();
+  //pressureBEGIN();
 }
 
 void loop() {
+  Watchdog.reset();       // Reset watchdog timer
+  Serial.println(isPowered);
   /*  Breathe button action
    * - Push to run (start to move with current setting data)
    * - Hold for 2 seconds to stop (return arms to home position)
    */
-  if (!isBreathing && breatheBT.push()){
+  if(!isPowered && powerBT.push()){
+    powerBT.resetHold();
+    lcd.backlight();
+    startUpScreen();
+    isPowered = true;
+  }else if (isPowered && powerBT.onHold()>=3000) {
+    powerBT.resetHold();
+    isBreathing = false; // stop the motor
+    alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_CMD_MOTOR);
+    delay(500);
+    lcd.clear();
+    lcd.noBacklight();
+    isPowered = false;
+  }
+  
+  if (isPowered && !isBreathing && breatheBT.push()){
     breatheBT.resetHold();
     Beep(3, 100);
     isBreathing = true; // Run the motor
     alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_CMD_MOTOR);
     Screen = modeVCV? scr_VCVDisplay_Actual:scr_BPAPDisplay_Actual;
-  }else if (isBreathing && breatheBT.onHold()>=2000){
+  }else if (isPowered && isBreathing && breatheBT.onHold()>=2000){
     breatheBT.resetHold();
     Beep(3, 100);
     isAlarm = false;     // Reset alarm for new operation
@@ -368,7 +391,7 @@ void loop() {
   * - Check pressure sensor status for Alarm
   * - Capture PIP and PEEP for actual displays
   */
-  alarming.pressure_sensor_fail = !pressureCMH2O(actual.pressureRead); //pressure in cmH2O
+  //alarming.pressure_sensor_fail = !pressureCMH2O(actual.pressureRead); //pressure in cmH2O
   isAlarm = alarming.pressure_sensor_fail;
   //Serial.println(actual.pressureRead);
 
@@ -379,7 +402,7 @@ void loop() {
      */
     if (millis()-timing.pressure_send_timer>=timing.pressure_send_time) {
       timing.pressure_send_timer = millis();
-      alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_DATA_PRESSURE);
+      //alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_DATA_PRESSURE);
     }
   
     //record PIP and PEEP pressure
@@ -651,7 +674,7 @@ void loop() {
     alarming.off_timer = millis();
   }
 
-  lcdDiplay(Screen);
+  if(isPowered) lcdDiplay(Screen);
 }
 
 void pressureBEGIN(){
@@ -724,207 +747,186 @@ void lcdDiplay(uint8_t _screen){
 
   switch (_screen) {
       case scr_PowerON:
-        //           -----------------------
-        dispRow.R1 = "  LIBV OPEN SOURCE  ";
-        dispRow.R2 = " VENTILATOR PROJECT ";
-        dispRow.R3 = "                    ";
-        dispRow.R4 = "   www.bvmvent.org  ";
-        //           -----------------------
+        lcd_print(F("  LIBV OPEN SOURCE  "),
+                  F(" VENTILATOR PROJECT "),
+                  F("                    "),
+                  F("   www.bvmvent.org  "));
         break;
 
       case scr_PressureFail:
-        //           -----------------------
-        dispRow.R1 = "   >>> ALARM <<<    ";
-        dispRow.R2 = "                    ";
-        dispRow.R3 = "Pressure Sensor Fail";
-        dispRow.R4 = "  (Check & Reboot)  ";
-        //           -----------------------
+        lcd_print(F("   >>> ALARM <<<    "),
+                  F("                    "),
+                  F("Pressure Sensor Fail"),
+                  F("  (Check & Reboot)  "));
         break;
 
       case scr_Setting_VCV:
-        //           -----------------------
-        dispRow.R1 = "    Select Mode:    ";
-        dispRow.R2 = "                    ";
-        dispRow.R3 = "   >VCV     BPAP    ";
-        dispRow.R4 = "                    ";
-        //           -----------------------
+        lcd_print(F("    Select Mode:    "),
+                  F("                    "),
+                  F("   >VCV     BPAP    "),
+                  F("                    "));
         break;
 
       case scr_Setting_BPAP:
-        //           -----------------------
-        dispRow.R1 = "    Select Mode:    ";
-        dispRow.R2 = "                    ";
-        dispRow.R3 = "    VCV    >BPAP    ";
-        dispRow.R4 = "                    ";
-        //           -----------------------
+        lcd_print(F("    Select Mode:    "),
+                  F("                    "),
+                  F("   VCV     >BPAP    "),
+                  F("                    "));
         break;
 
       case scr_VCVSetting_IP:
-        //           -----------------------
-        dispRow.R1 = "VCV Setting:        ";
-        dispRow.R2 = ">IP "+(String)VCVdisplay.IP+"cm            ";
-        dispRow.R3 = " TV " + (String)VCVdisplay.TV + "ml  RR   "+(String)VCVdisplay.RR+"  ";
-        dispRow.R4 = " IE 1:"+str_vcv_ie+" PEEP "+ (String)VCVdisplay.PEEP +"cm";
-        //           -----------------------
+        lcd_print(F("VCV Setting:        "),
+                  ">IP "+(String)VCVdisplay.IP+"cm            ",
+                  " TV " + (String)VCVdisplay.TV + "ml  RR   "+(String)VCVdisplay.RR+"  ",
+                  " IE 1:"+str_vcv_ie+" PEEP "+ (String)VCVdisplay.PEEP +"cm");
         break;
 
       case scr_VCVSetting_TV:
-        //           -----------------------
-        dispRow.R1 = "VCV Setting:        ";
-        dispRow.R2 = " IP "+(String)VCVdisplay.IP+"cm            ";
-        dispRow.R3 = ">TV " + (String)VCVdisplay.TV + "ml  RR   "+(String)VCVdisplay.RR+"  ";
-        dispRow.R4 = " IE 1:"+str_vcv_ie+" PEEP "+ (String)VCVdisplay.PEEP +"cm";
-        //           -----------------------
+        lcd_print(F("VCV Setting:        "),
+                  " IP "+(String)VCVdisplay.IP+"cm            ",
+                  ">TV " + (String)VCVdisplay.TV + "ml  RR   "+(String)VCVdisplay.RR+"  ",
+                  " IE 1:"+str_vcv_ie+" PEEP "+ (String)VCVdisplay.PEEP +"cm");
         break;
 
       case scr_VCVSetting_RR:
-        //           -----------------------
-        dispRow.R1 = "VCV Setting:        ";
-        dispRow.R2 = " IP "+(String)VCVdisplay.IP+"cm            ";
-        dispRow.R3 = " TV " + (String)VCVdisplay.TV + "ml >RR   "+(String)VCVdisplay.RR+"  ";
-        dispRow.R4 = " IE 1:"+str_vcv_ie+" PEEP "+ (String)VCVdisplay.PEEP +"cm";
-        //           -----------------------
+        lcd_print(F("VCV Setting:        "),
+                  " IP "+(String)VCVdisplay.IP+"cm            ",
+                  " TV " + (String)VCVdisplay.TV + "ml >RR   "+(String)VCVdisplay.RR+"  ",
+                  " IE 1:"+str_vcv_ie+" PEEP "+ (String)VCVdisplay.PEEP +"cm");
         break;
 
       case scr_VCVSetting_IE:
-        //           -----------------------
-        dispRow.R1 = "VCV Setting:        ";
-        dispRow.R2 = " IP "+(String)VCVdisplay.IP+"cm            ";
-        dispRow.R3 = " TV " + (String)VCVdisplay.TV + "ml  RR   "+(String)VCVdisplay.RR+"  ";
-        dispRow.R4 = ">IE 1:"+str_vcv_ie+" PEEP "+ (String)VCVdisplay.PEEP +"cm";
-        //           -----------------------
+        lcd_print(F("VCV Setting:        "),
+                  " IP "+(String)VCVdisplay.IP+"cm            ",
+                  " TV " + (String)VCVdisplay.TV + "ml  RR   "+(String)VCVdisplay.RR+"  ",
+                  ">IE 1:"+str_vcv_ie+" PEEP "+ (String)VCVdisplay.PEEP +"cm");
         break;
 
       case scr_VCVSetting_PEEP:
-        //           -----------------------
-        dispRow.R1 = "VCV Setting:        ";
-        dispRow.R2 = " IP "+(String)VCVdisplay.IP+"cm            ";
-        dispRow.R3 = " TV " + (String)VCVdisplay.TV + "ml  RR   "+(String)VCVdisplay.RR+"  ";
-        dispRow.R4 = " IE 1:"+str_vcv_ie+">PEEP "+ (String)VCVdisplay.PEEP +"cm";
-        //           -----------------------
+        lcd_print(F("VCV Setting:        "),
+                  " IP "+(String)VCVdisplay.IP+"cm            ",
+                  " TV " + (String)VCVdisplay.TV + "ml  RR   "+(String)VCVdisplay.RR+"  ",
+                  " IE 1:"+str_vcv_ie+">PEEP "+ (String)VCVdisplay.PEEP +"cm");
         break;
 
       case scr_VCVDisplay_Actual:
-        //           -----------------------
-        dispRow.R1 = "     VCV ACTUAL     ";
-        dispRow.R2 = " IP      "+(String)actual.IP+"cm       ";
-        dispRow.R3 = " Plateau "+(String)actual.Plateau+"cm       ";
-        dispRow.R4 = " PEEP    "+(String)actual.PEEP+"cm       ";
-        //           -----------------------
+        lcd_print(F("     VCV ACTUAL     "),
+                  " IP      "+(String)actual.IP+"cm       ",
+                  " Plateau "+(String)actual.Plateau+"cm       ",
+                  " PEEP    "+(String)actual.PEEP+"cm       ");
         break;
 
       case scr_VCVDisplay_Setting:
-        //           -----------------------
-        dispRow.R1 = "      VCV MODE      ";
-        dispRow.R2 = " PEEP "+ (String)VCVdisplay.PEEP +"cm           ";
-        dispRow.R3 = " RR "+(String)VCVdisplay.RR+"     IE 1:"+str_vcv_ie;
-        dispRow.R4 = " IP "+(String)VCVdisplay.IP+"cm   TV "+ (String)VCVdisplay.TV + "ml ";
-        //           -----------------------
+        lcd_print(F("      VCV MODE      "),
+                  " PEEP "+ (String)VCVdisplay.PEEP +"cm           ",
+                  " RR "+(String)VCVdisplay.RR+"     IE 1:"+str_vcv_ie,
+                  " IP "+(String)VCVdisplay.IP+"cm   TV "+ (String)VCVdisplay.TV + "ml ");
         break;
 
       case scr_VCVAlarm_PEEP:
-        //           -----------------------
-        dispRow.R1 = "   >>> ALARM <<<    ";
-        dispRow.R2 = "                    ";
-        dispRow.R3 = " PEEP SET:  "+(String)VCVdisplay.PEEP+"cm    ";
-        dispRow.R4 = " PEEP ACTL: "+(String)actual.PEEP+"cm    ";
-        //           -----------------------
+        lcd_print(F("   >>> ALARM <<<    "),
+                  F("                    "),
+                  " PEEP SET:  "+(String)VCVdisplay.PEEP+"cm    ",
+                  " PEEP ACTL: "+(String)actual.PEEP+"cm    ");
         break;
 
       case scr_VCVAlarm_IP:
-        //           -----------------------
-        dispRow.R1 = "   >>> ALARM <<<    ";
-        dispRow.R2 = "                    ";
-        dispRow.R3 = " IP SET:  "+(String)VCVdisplay.IP+"cm     ";
-        dispRow.R4 = " IP ACTL: "+(String)actual.IP+"cm     ";
-        //           -----------------------
+        lcd_print(F("   >>> ALARM <<<    "),
+                  F("                    "),
+                  " IP SET:  "+(String)VCVdisplay.IP+"cm     ",
+                  " IP ACTL: "+(String)actual.IP+"cm     ");
         break;
 
       case scr_BPAPSetting_IP:
         //           -----------------------
-        dispRow.R1 = "   BPAP Setting:    ";
         dispRow.R2 = ">IP "+(String)BPAPdisplay.IP+"cm  PEEP "+(String)BPAPdisplay.PEEP+"cm ";
         if (BPAPdisplay.IP<10) dispRow.R2 = ">IP "+(String)BPAPdisplay.IP+"cm   PEEP "+(String)BPAPdisplay.PEEP+"cm ";
         dispRow.R3 = " TP "+(String)BPAPdisplay.TP+"cm  FST  "+str_bpap_fst+" ";
         if(BPAPdisplay.TP<10) dispRow.R3 = " TP "+(String)BPAPdisplay.TP+"cm   FST  "+str_bpap_fst+" ";
-        dispRow.R4 = "                    ";
         //           -----------------------
+        lcd_print(F("   BPAP Setting:    "),
+                  dispRow.R2,
+                  dispRow.R3,
+                  F("                    "));
         break;
 
       case scr_BPAPSetting_PEEP:
         //           -----------------------
-        dispRow.R1 = "   BPAP Setting:    ";
         dispRow.R2 = " IP "+(String)BPAPdisplay.IP+"cm >PEEP "+(String)BPAPdisplay.PEEP+"cm ";
         if (BPAPdisplay.IP<10) dispRow.R2 = " IP "+(String)BPAPdisplay.IP+"cm  >PEEP "+(String)BPAPdisplay.PEEP+"cm ";
         dispRow.R3 = " TP "+(String)BPAPdisplay.TP+"cm  FST  "+str_bpap_fst+" ";
         if(BPAPdisplay.TP<10) dispRow.R3 = " TP "+(String)BPAPdisplay.TP+"cm   FST  "+str_bpap_fst+" ";
-        dispRow.R4 = "                    ";
         //           -----------------------
+        lcd_print(F("   BPAP Setting:    "),
+                  dispRow.R2,
+                  dispRow.R3,
+                  F("                    "));
         break;
 
       case scr_BPAPSetting_TP:
         //           -----------------------
-        dispRow.R1 = "   BPAP Setting:    ";
         dispRow.R2 = " IP "+(String)BPAPdisplay.IP+"cm  PEEP "+(String)BPAPdisplay.PEEP+"cm ";
         if (BPAPdisplay.IP<10) dispRow.R2 = " IP "+(String)BPAPdisplay.IP+"cm   PEEP "+(String)BPAPdisplay.PEEP+"cm ";
         dispRow.R3 = ">TP "+(String)BPAPdisplay.TP+"cm  FST  "+str_bpap_fst+" ";
         if(BPAPdisplay.TP<10) dispRow.R3 = ">TP "+(String)BPAPdisplay.TP+"cm   FST  "+str_bpap_fst+" ";
-        dispRow.R4 = "                    ";
         //           -----------------------
+        lcd_print(F("   BPAP Setting:    "),
+                  dispRow.R2,
+                  dispRow.R3,
+                  F("                    "));
         break;
 
       case scr_BPAPSetting_FST:
         //           -----------------------
-        dispRow.R1 = "   BPAP Setting:    ";
         dispRow.R2 = " IP "+(String)BPAPdisplay.IP+"cm  PEEP "+(String)BPAPdisplay.PEEP+"cm ";
         if (BPAPdisplay.IP<10) dispRow.R2 = " IP "+(String)BPAPdisplay.IP+"cm   PEEP "+(String)BPAPdisplay.PEEP+"cm ";
         dispRow.R3 = " TP "+(String)BPAPdisplay.TP+"cm >FST  "+str_bpap_fst+" ";
         if(BPAPdisplay.TP<10) dispRow.R3 = " TP "+(String)BPAPdisplay.TP+"cm  >FST  "+str_bpap_fst+" ";
-        dispRow.R4 = "                    ";
         //           -----------------------
+        lcd_print(F("   BPAP Setting:    "),
+                  dispRow.R2,
+                  dispRow.R3,
+                  F("                    "));
         break;
 
       case scr_BPAPDisplay_Actual:
-        //           -----------------------
-        dispRow.R1 = "    BPAP ACTUAL     ";
-        dispRow.R2 = " PA 40cm            ";
-        dispRow.R3 = " TV 200ml    IP 40cm";
-        dispRow.R4 = "   <SEE SETTING>    ";
-        //           -----------------------
+        lcd_print(F("    BPAP ACTUAL     "),
+                  F(" PA 40cm            "),
+                  F(" TV 200ml    IP 40cm"),
+                  F("   <SEE SETTING>    "));
         break;
 
       case scr_BPAPDisplay_Setting:
-        //           -----------------------
-        dispRow.R1 = "     BPAP MODE      ";
-        dispRow.R2 = "                    ";
-        dispRow.R3 = " TP "+(String)BPAPdisplay.TP+"cm   FST  "+str_bpap_fst;
-        dispRow.R4 = " IP "+(String)BPAPdisplay.IP+"cm   PEEP "+(String)BPAPdisplay.PEEP;
-        //           -----------------------
+        lcd_print(F("     BPAP MODE      "),
+                  F("                    "),
+                  " TP "+(String)BPAPdisplay.TP+"cm   FST  "+str_bpap_fst,
+                  " IP "+(String)BPAPdisplay.IP+"cm   PEEP "+(String)BPAPdisplay.PEEP);
         break;
 
       case scr_BPAPlarm:  
-        //           -----------------------
-        dispRow.R1 = " >> BPAP  FIALED << ";
-        dispRow.R2 = " >> VCV FAILSAFE << ";
-        dispRow.R3 = " ACTUAL:  PA  40cm  ";
-        dispRow.R4 = " TV 200ml IP  40cm  ";
-        //           -----------------------
+        lcd_print(F(" >> BPAP  FIALED << "),
+                  F(" >> VCV FAILSAFE << "),
+                  F(" ACTUAL:  PA  40cm  "),
+                  F(" TV 200ml IP  40cm  "));
         break;
 
       default:
         // do something
         break;
   }
+}
+
+void lcd_print(String _r0, String _r1, String _r2, String _r3){
   delay(1);
   //Print new data
   lcd.setCursor(0,0);
-  lcd.print(dispRow.R1);
+  lcd.print(_r0);
   lcd.setCursor(0,1);
-  lcd.print(dispRow.R2);
+  lcd.print(_r1);
   lcd.setCursor(0,2);
-  lcd.print(dispRow.R3);
+  lcd.print(_r2);
   lcd.setCursor(0,3);
-  lcd.print(dispRow.R4);
+  lcd.print(_r3);
 }
 
 void Alarm(Alarm_Type _num, long &_alarm_timer, bool _silent_buzzer){
@@ -1087,12 +1089,3 @@ bool inRange(int _val, int _min, int _max){
 bool outOfRange(float _input, float _set, float _offset){
   return abs(_set - _input) >= _offset;
 }
-
-//birth to 6 weeks: 30–40 breaths per minute
-//6 months: 25–40 breaths per minute
-//3 years: 20–30 breaths per minute
-//6 years: 18–25 breaths per minute
-//10 years: 17–23 breaths per minute
-//Adults: 12-18 breaths per minute[9]
-//Elderly ≥ 65 years old: 12-28 breaths per minute.
-//Elderly ≥ 80 years old: 10-30 breaths per minute
