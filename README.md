@@ -1,24 +1,21 @@
 # LIBV Open Source Ventilator
 
-Check out our [website](https://www.bvmvent.org/) for updates.
+Check out our [www.bvmvent.org](https://www.bvmvent.org/) for updates.
 
+The Problem: The COVID-19 Pandemic has highlighted the scarcity of potentially life-saving resources around the world.
+Our Challenge: Design and Engineer an Open Source, low cost (sub $150) ventilator using readily available materials for rapid deployment in developing countries where there may not be an alternative.
 
-### Sending Data to IoT Module
-```
-// Example of sending data to IoT module
-// See https://arduinojson.org/ for more info on ArduinoJson
+Who we are: A Collective of Engineers, Medics and Scientists from across the world, centred around a hub in Phnom Penh, Cambodia.
+Help Us: We need Volunteers, a Community of Contributors and Donors to join us and help us deliver our vision.
 
-// Library: ArduinoJson by Benoit Blanchon
-#include <ArduinoJson.h>
+# LIBV Electronics
 
-void setup() {
-    Serial1.begin(9600);    // To IoT module
-    while (!Serial1) continue;
-}
+The LIBV electronics are based on an Arduino Nano (Atmega328) architecture.
 
-void loop() {
-    StaticJsonDocument<200> doc;     // Set to number of bytes big enough to hold the data
-    doc["uptime_hours"] = 0.1;
-    serializeJson(doc, Serial1);
-}
-```
+## 1. Electronics Circuit
+
+Full PCB design using KiCAD [LIBV PCB](https://github.com/LIBVproject/LIBV-ventilator-pcb).
+
+## 2. Arduino Program
+
+**Control Panel Loop**
