@@ -214,6 +214,7 @@ struct ACTUAL_DISPLAY{
 
 enum  screenID {
   scr_PowerON,
+  scr_ArmFail,
   scr_PressureFail,
   scr_Setting_VCV,
   scr_Setting_BPAP,
@@ -754,6 +755,13 @@ void lcdDiplay(uint8_t _screen){
                   F(" VENTILATOR PROJECT "),
                   F("                    "),
                   F("   www.bvmvent.org  "));
+        break;
+
+      case scr_ArmFail:
+        lcd_print(F("   >>> ALARM <<<    "),
+                  F("                    "),
+                  F("Arm initialize fail "),
+                  F("  (Check & Reboot)  "));
         break;
 
       case scr_PressureFail:
