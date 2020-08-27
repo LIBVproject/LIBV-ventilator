@@ -395,7 +395,7 @@ void loop() {
   * - Check pressure sensor status for Alarm
   * - Capture PIP and PEEP for actual displays
   */
-  //alarming.pressure_sensor_fail = !pressureCMH2O(actual.pressureRead); //pressure in cmH2O
+  alarming.pressure_sensor_fail = !pressureCMH2O(actual.pressureRead); //pressure in cmH2O
   isAlarm = alarming.pressure_sensor_fail;
   //Serial.println(actual.pressureRead);
 
@@ -406,7 +406,7 @@ void loop() {
      */
     if (millis()-timing.pressure_send_timer>=timing.pressure_send_time) {
       timing.pressure_send_timer = millis();
-      //alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_DATA_PRESSURE);
+      alarming.i2c_communication_fail=!wireData(I2C_ADDR_MOTOR, I2C_DATA_PRESSURE);
     }
   
     //record PIP and PEEP pressure
