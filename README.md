@@ -16,6 +16,14 @@ The LIBV electronics are based on an Arduino Nano (Atmega328) architecture.
 
 Full PCB design using KiCAD [LIBV PCB](https://github.com/LIBVproject/LIBV-ventilator-pcb).
 
+**Circuit Diagram**
+
+![](image/LIBV-circuit-diagram.png)
+
 ## 2. Arduino Program
 
 **Control Panel Loop**
+
+<p align="center">
+  <img width=auto height=auto src="https://github.com/LIBVproject/LIBV-ventilator/blob/dev/image/LIBV-control-loop.png">
+</p>
