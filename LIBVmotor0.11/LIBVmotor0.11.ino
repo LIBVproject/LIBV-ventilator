@@ -1,5 +1,6 @@
 /* LIBV Project
  * Website: https://bvmvent.org/
+ * GitHub: https://github.com/LIBVproject/LIBV-ventilator
  * 
  * #VENTILATOR MOTOR CONTROL#
  * 
@@ -12,7 +13,7 @@
  *
  * LIBRARY:
  * - Encoder: https://github.com/PaulStoffregen/Encoder
- * - simplePID: https://github.com/eTRONICSKH/SimplePID-Arduino-Library
+ * - simplePID: https://github.com/eTRONICSKH/SimplePID-Arduino-Library-V01
  * - BTS7960 Driver: https://github.com/eTRONICSKH/BTS7960-Driver-Arduino-Library
  * - button: https://github.com/eTRONICSKH/SimpleButton-Arduino-Library
  */
@@ -24,14 +25,21 @@
 #include <BTS7960.h>
 #include <button.h>
 
+#define DEBUG true
+
 #define STATION_I2C_ADD 8 //I2C slave station Address
 
 //VAL: EPPROM Address
 const int TV_ADD= 10, TI_ADD=11, IE_ADD=12;
 
 enum I2C_Func{
+  I2C_CMD_POWER,
   I2C_CMD_MOTOR,
-  I2C_DATA_SETTING
+  I2C_DATA_SETTING,
+  I2C_DATA_PRESSURE,
+  I2C_REQUEST_PLATEAU,
+  I2C_REQUEST_POSITION,
+  I2C_REQUEST_PLATEAU_AND_POSITION
 };
 
 struct EEPROM_ADDR {
@@ -82,11 +90,13 @@ struct BPAP_MODE {
   float FST;
 };
 
+
+
 bool modeVCV=true;
 
 //P-IN: Hall switch
-#define HALL1_PIN 11
-#define HALL2_PIN 10
+#define HALL1_PIN A0
+#define HALL2_PIN A1
 
 //P-IN: Button
 #define BREATH_PIN 12
@@ -128,7 +138,9 @@ float TV2RPB=0.0;
 double speedSet = 0.0;  //speed to push in and push out of the motor, in round per second (rps)
 
 unsigned long timer=0;              //to store the timer of running, millis(), millisecond
+bool isPowered = false;
 bool isBreathing=false;     //Machine is running or not, true: help breathing & false: standby
+bool isInitialized=false;
 uint8_t state = 0;
 enum States{
   INHALE,       //0
@@ -139,7 +151,7 @@ enum States{
 
 struct STATE_TIMER{
   uint16_t inhale;
-  uint16_t plateau = 100;
+  uint16_t plateau = 100; //100 from MIT
   uint16_t exhale;
   uint16_t rest;
 };
@@ -149,12 +161,21 @@ struct STATE_SPEED{
   double exhale;
 };
 
+struct ACTUAL_RECORD{
+  uint8_t Pressure;
+  uint8_t Plateau;      // Platual pressure
+  uint8_t Position;
+};
+
+uint8_t i2c_request_func = I2C_REQUEST_PLATEAU;
+
 
 EEPROM_ADDR EEPROMaddress;
 VCV_MODE VCVsetting;
 BPAP_MODE BPAPsetting;
 SINGLE_BYTE_CONST singleByteConst;
 STATE_TIMER timing;
+ACTUAL_RECORD actual;
 STATE_SPEED speed;
 
 simplePID PiD(Kp, Ki);      //Kp, Ki, use only PI, name it to "PiD"
@@ -178,72 +199,74 @@ void setup() {
   //HALL2.begin(false);
 
   //I2C Setup
-  Wire.begin(STATION_I2C_ADD);                // join i2c bus with address #8
+  Wire.begin(STATION_I2C_ADD);        // join i2c bus with address #8
   Wire.onReceive(receiveEvent);       // I2C receive data event
+  Wire.onRequest(requestEvent);       // register response event
 
   EEPROM_read(); //Get Setting from EEPROM
   BPM_Timing();  //Calc breath timing
   
   motor.init();  //Motor Setup
-
-  //Initialize the Arms
-  timer = millis();
-  while(true){
-    motor.setPWM(-200);
-    if(!digitalRead(HALL1_PIN) || millis()-timer>=10000) break;
-  }
-  motor.setPWM(0);
-  delay(300);
-
-  motor.setPWM(100);
-  delay(500);
-
-  timer = millis();
-  while(true){
-    motor.setPWM(-80);
-    if(!digitalRead(HALL1_PIN) || millis()-timer>=5000) break;
-  }
-  motor.setPWM(0);
-  delay(500);
-  digitalWrite(LED_PIN, 1);
-
-  //Reset Encoder & Timer
-  Enc.write(0);
-  xEn = Enc.read();
-  timer = millis();
-  xt=millis();
 }
 
 
 void loop() {
   //readSerial();  //Testing cmd from Serial
 
-  if(!isBreathing){
-  	speedSet = speed.exhale;
-    goPos = ZERO; //go to HOME position
-  }else{
-    switch(state){
+  //TODO: Move initiate state HERE
+
+  digitalWrite(LED_PIN, isBreathing);
+  if (isPowered) {
+    if (isInitialized) {
+      if(!isBreathing){
+        speedSet = speed.exhale;
+        goPos = ZERO; //go to HOME position
+        state = REST; //reset state
+      }else{
+        if (modeVCV) {
+          //VCV mode
+          runVCV();
+        }else{
+          //BPAP modeb
+          runBPAP();
+        }
+      }
+      MotorControl();
+    }else{
+      isInitialized = initHome();
+    }
+  }else {
+    isInitialized = false;
+    motor.setPWM(0);
+  }
+  
+}
+
+void runVCV(){
+  switch(state){
       /* Inhale state*/
       case INHALE:
         goPos = TV2RPB;
         speedSet = speed.inhale;
         
-        /*
-        if(millis()-timer>=timeIn || abs(goPos-aPos)<=0.04){
+        if(millis()-timer>=timing.inhale || abs(goPos-aPos)<=0.01){
           timer = millis();
-          venStat = pushOUT;
+          actual.Position = 100*(aPos/goPos); // Record poisition in percentage
+          state = PLATEAU; //reached desire position, move on
         }
-		    */
-
+        
+        /*
         if(abs(goPos-aPos)<=0.01) {
-        	timer = millis();
-        	state = PLATEAU; //reached desire position, move on
+          timer = millis();
+          state = PLATEAU; //reached desire position, move on
         }
+        */
         break;
 
       /* Meassuring Plateau Pressure */
       case PLATEAU:
         speedSet = ZERO;
+        actual.Plateau = actual.Pressure;
         if (millis()-timer >= timing.plateau){
           timer = millis();
           state = EXHALE;
@@ -268,8 +291,43 @@ void loop() {
         }
         break;
     }
+}
+
+void runBPAP(){
+  /*
+  
+  */
+}
+
+bool initHome(){
+  //Initialize the Arms
+  timer = millis();
+  while(true){
+    motor.setPWM(-200);
+    if(!digitalRead(HALL1_PIN) || millis()-timer>=10000) break;
   }
-  MotorControl();
+  motor.setPWM(0);
+  delay(300);
+
+  motor.setPWM(100);
+  delay(500);
+
+  timer = millis();
+  while(true){
+    motor.setPWM(-80);
+    if(!digitalRead(HALL1_PIN) || millis()-timer>=5000) break;
+  }
+  motor.setPWM(0);
+  digitalWrite(LED_PIN, 1);
+  delay(500);
+
+  //Reset Encoder & Timer
+  Enc.write(0);
+  xEn = Enc.read();
+  timer = millis();
+  xt=millis();
+
+  return true;
 }
 
 void MotorControl(){
@@ -389,7 +447,12 @@ float camPosition(int _tv){
 //I2C Receive Data and update to EEPROM
 void receiveEvent(int howMany) {
   uint8_t _func = Wire.read();
+  if (DEBUG) Serial.println("I2C Func: "+(String)_func);
   switch (_func) {
+      case I2C_CMD_POWER:
+        isPowered = (bool)Wire.read();
+        break;
+
       case I2C_CMD_MOTOR:    //Read as motor command
         isBreathing = (bool)Wire.read();
         break;
@@ -406,21 +469,37 @@ void receiveEvent(int howMany) {
         BPAPsetting.TP = Wire.read();
         BPAPsetting.FST = Wire.read()/singleByteConst.FST;
         break;
+
+      case I2C_DATA_PRESSURE:
+        actual.Pressure = Wire.read();
+        break;
+
+      // Request function
+      default:
+        i2c_request_func = Wire.read();
+        break;
   }
   //Read each byte from master
+  if (DEBUG) {
+    Serial.println("-------------------");
+    Serial.print("Mode: ");Serial.println(modeVCV);
+    Serial.print("IP: ");Serial.println(VCVsetting.IP);
+    Serial.print("TV: ");Serial.println(VCVsetting.TV);
+    Serial.print("RR: ");Serial.println(VCVsetting.RR);
+    Serial.print("IE: ");Serial.println(VCVsetting.IE);
+    Serial.print("PEEP: ");Serial.println(VCVsetting.PEEP);
+    Serial.println("-------------------");
+  }
   
-
-  Serial.println("-------------------");
-  Serial.print("Mode: ");Serial.println(modeVCV);
-  Serial.print("IP: ");Serial.println(VCVsetting.IP);
-  Serial.print("TV: ");Serial.println(VCVsetting.TV);
-  Serial.print("RR: ");Serial.println(VCVsetting.RR);
-  Serial.print("IE: ");Serial.println(VCVsetting.IE);
-  Serial.print("PEEP: ");Serial.println(VCVsetting.PEEP);
-  Serial.println("-------------------");
 
   EEPROM_update();
   BPM_Timing();
+}
+
+//I2C response to master request
+void requestEvent(){
+  Wire.write(actual.Plateau);
+  Wire.write(actual.Position);
 }
 
 void EEPROM_update(){
@@ -443,7 +522,7 @@ void EEPROM_read(){
 
   VCVsetting.IP   = EEPROM.read(EEPROMaddress.VCV_IP);
   VCVsetting.TV   = EEPROM.read(EEPROMaddress.VCV_TV)/singleByteConst.TV;
-  VCVsetting.RR  = EEPROM.read(EEPROMaddress.VCV_RR);
+  VCVsetting.RR   = EEPROM.read(EEPROMaddress.VCV_RR);
   VCVsetting.IE   = EEPROM.read(EEPROMaddress.VCV_IE)/singleByteConst.IE;
   VCVsetting.PEEP = EEPROM.read(EEPROMaddress.VCV_PEEP);
   
